@@ -1,10 +1,10 @@
 import json
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import PostgresDsn, RedisDsn, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: str
 
-    FRONTEND_ORIGINS: list[str]
+    FRONTEND_ORIGINS: Annotated[list[str], NoDecode]
 
     COOKIE_DOMAIN: str | None = None
     COOKIE_SECURE: bool
