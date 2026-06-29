@@ -1,0 +1,67 @@
+services:
+  api:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    ports:
+      - "${API_PORT:?API_PORT is required}:4000"
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:?JWT_ALGORITHM is required}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:?ACCESS_TOKEN_TTL_SECONDS is required}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:?REFRESH_TOKEN_TTL_SECONDS is required}
+      BOT_TOKEN: ${BOT_TOKEN?BOT_TOKEN is required}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:?FRONTEND_ORIGINS is required}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN?COOKIE_DOMAIN is required}
+      COOKIE_SECURE: ${COOKIE_SECURE:?COOKIE_SECURE is required}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:?COOKIE_SAMESITE is required}
+      SQL_ECHO: ${SQL_ECHO:?SQL_ECHO is required}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/ready', timeout=3).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  db:
+    image: postgres:17-alpine
+    ports:
+      - "${POSTGRES_PORT:?POSTGRES_PORT is required}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:?REDIS_PORT is required}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

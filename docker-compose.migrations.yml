@@ -1,0 +1,40 @@
+services:
+  migrate-prod:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    command: alembic upgrade head
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:?JWT_ALGORITHM is required}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:?ACCESS_TOKEN_TTL_SECONDS is required}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:?REFRESH_TOKEN_TTL_SECONDS is required}
+      BOT_TOKEN: ${BOT_TOKEN?BOT_TOKEN is required}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:?FRONTEND_ORIGINS is required}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN?COOKIE_DOMAIN is required}
+      COOKIE_SECURE: ${COOKIE_SECURE:?COOKIE_SECURE is required}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:?COOKIE_SAMESITE is required}
+      SQL_ECHO: ${SQL_ECHO:?SQL_ECHO is required}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+    restart: "no"
+
+  migrate-test:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    command: alembic upgrade head
+    environment:
+      APP_ENV: test
+      DATABASE_URL: ${TEST_DATABASE_URL:?TEST_DATABASE_URL is required}
+      REDIS_URL: ${TEST_REDIS_URL:?TEST_REDIS_URL is required}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:?JWT_ALGORITHM is required}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:?ACCESS_TOKEN_TTL_SECONDS is required}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:?REFRESH_TOKEN_TTL_SECONDS is required}
+      BOT_TOKEN: ${BOT_TOKEN?BOT_TOKEN is required}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:?FRONTEND_ORIGINS is required}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN?COOKIE_DOMAIN is required}
+      COOKIE_SECURE: ${COOKIE_SECURE:?COOKIE_SECURE is required}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:?COOKIE_SAMESITE is required}
+      SQL_ECHO: ${SQL_ECHO:?SQL_ECHO is required}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+    restart: "no"

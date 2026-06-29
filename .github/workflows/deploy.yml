@@ -1,0 +1,111 @@
+name: Deploy backend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Prepare image name
+        id: image
+        shell: bash
+        run: |
+          image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
+          image_tag="${GITHUB_SHA}"
+          echo "name=${image_name}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${image_name}:${image_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.ref }}
+            ${{ steps.image.outputs.name }}:latest
+
+      - name: Write deploy env
+        shell: bash
+        run: |
+          cat > .env.deploy <<'EOF'
+          BACKEND_IMAGE=${{ steps.image.outputs.ref }}
+          API_PORT=${{ secrets.API_PORT }}
+          POSTGRES_PORT=${{ secrets.POSTGRES_PORT }}
+          REDIS_PORT=${{ secrets.REDIS_PORT }}
+          APP_ENV=${{ vars.APP_ENV }}
+          DATABASE_URL=${{ vars.DATABASE_URL }}
+          REDIS_URL=${{ vars.REDIS_URL }}
+          SECRET_KEY=${{ vars.SECRET_KEY }}
+          JWT_ALGORITHM=${{ vars.JWT_ALGORITHM }}
+          ACCESS_TOKEN_TTL_SECONDS=${{ vars.ACCESS_TOKEN_TTL_SECONDS }}
+          REFRESH_TOKEN_TTL_SECONDS=${{ vars.REFRESH_TOKEN_TTL_SECONDS }}
+          BOT_TOKEN=${{ vars.BOT_TOKEN }}
+          FRONTEND_ORIGINS=${{ vars.FRONTEND_ORIGINS }}
+          COOKIE_DOMAIN=${{ vars.COOKIE_DOMAIN }}
+          COOKIE_SECURE=${{ vars.COOKIE_SECURE }}
+          COOKIE_SAMESITE=${{ vars.COOKIE_SAMESITE }}
+          SQL_ECHO=${{ vars.SQL_ECHO }}
+          LOG_LEVEL=${{ vars.LOG_LEVEL }}
+          POSTGRES_DB=${{ vars.POSTGRES_DB }}
+          POSTGRES_USER=${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ vars.POSTGRES_PASSWORD }}
+          TEST_DATABASE_URL=${{ vars.TEST_DATABASE_URL }}
+          TEST_REDIS_URL=${{ vars.TEST_REDIS_URL }}
+          EOF
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          cat > ~/.ssh/deploy_key <<'EOF'
+          ${{ secrets.SERVER_PRIVATE_SSH_KEY }}
+          EOF
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Copy compose files
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "mkdir -p '${{ vars.DEPLOY_PATH }}'"
+          scp -i ~/.ssh/deploy_key \
+            docker-compose.yml \
+            docker-compose.migrations.yml \
+            .env.deploy \
+            "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ vars.DEPLOY_PATH }}/"
+
+      - name: Deploy on server
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd '${{ vars.DEPLOY_PATH }}'
+          mv .env.deploy .env
+          echo '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+          docker compose pull
+          docker compose up -d --wait db redis
+          docker compose -f docker-compose.yml -f docker-compose.migrations.yml run --rm migrate-prod
+          docker compose up -d --remove-orphans api
+          docker image prune -f
+          EOF
