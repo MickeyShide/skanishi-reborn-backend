@@ -7,16 +7,17 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlmodel import SQLModel
 
+import app.db.models  # noqa: F401
 from app.config import settings
-from app.core.database import Base
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = SQLModel.metadata
 
 
 def get_database_url() -> str:
