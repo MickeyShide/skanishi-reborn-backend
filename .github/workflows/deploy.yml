@@ -114,7 +114,15 @@ jobs:
           echo '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
           docker compose pull
           docker compose up -d --wait db redis
-          docker compose -f docker-compose.yml -f docker-compose.migrations.yml run --rm migrate
+          set +e
+          docker compose -f docker-compose.yml -f docker-compose.migrations.yml run --rm --no-deps migrate
+          migrate_status=$?
+          set -e
+          docker compose ps -a
+          if [ "$migrate_status" -ne 0 ]; then
+            echo "Migration failed with exit code ${migrate_status}"
+            exit "$migrate_status"
+          fi
           docker compose ps -a
           docker compose up -d --wait --remove-orphans api
           docker compose ps -a
