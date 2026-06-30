@@ -107,7 +107,7 @@ jobs:
       - name: Deploy on server
         shell: bash
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'EOF'
+          ssh -T -i ~/.ssh/deploy_key "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'EOF'
           set -euxo pipefail
           cd '${{ vars.DEPLOY_PATH }}'
           mv .env.deploy .env
@@ -115,9 +115,10 @@ jobs:
           docker compose pull
           docker compose up -d --wait db redis
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.migrations.yml run --rm --no-deps -T migrate
+          docker compose -f docker-compose.yml -f docker-compose.migrations.yml up --no-deps --abort-on-container-exit --exit-code-from migrate migrate </dev/null
           migrate_status=$?
           set -e
+          docker compose -f docker-compose.yml -f docker-compose.migrations.yml rm -fsv migrate || true
           docker compose ps -a
           if [ "$migrate_status" -ne 0 ]; then
             echo "Migration failed with exit code ${migrate_status}"
