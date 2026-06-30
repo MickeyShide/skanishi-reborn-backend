@@ -115,7 +115,7 @@ jobs:
           docker compose pull
           docker compose up -d --wait db redis
           set +e
-          docker compose -f docker-compose.yml -f docker-compose.migrations.yml run --rm --no-deps migrate
+          docker compose -f docker-compose.yml -f docker-compose.migrations.yml run --rm --no-deps -T migrate
           migrate_status=$?
           set -e
           docker compose ps -a
