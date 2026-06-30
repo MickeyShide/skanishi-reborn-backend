@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import routers
 from app.config import settings
-from app.core.database import check_database, close_database
+from app.core.database import check_database, close_database, init_engine
 from app.core.errors import register_error_handlers
 from app.core.logger import logger, setup_logging
 from app.core.middlewares import LoggingMiddleware
@@ -18,6 +18,8 @@ async def lifespan(app: FastAPI):
     # 1. Сначала настраиваем логирование, чтобы видеть логи инициализации каркаса
     setup_logging(settings.LOG_LEVEL)
     logger.info("Application is starting up (Infrastructure initializing)...")
+
+    init_engine(echo=settings.SQL_ECHO)
 
     # 2. Проверяем обязательное подключение к PostgreSQL (Принцип Fail-Fast по ТЗ)
     try:

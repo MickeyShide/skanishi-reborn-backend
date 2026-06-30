@@ -7,6 +7,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logger import request_id_ctx
 from app.schemas.common import ErrorDetail, ErrorResponse
+from app.services.errors import AppServiceError
 
 logger = logging.getLogger("app")
 
@@ -64,22 +65,41 @@ def register_error_handlers(app: FastAPI) -> None:
 
         # ТЗ требует разделять причины JWT errors и возвращать 400 вместо 500
         # Если деталь ошибки передана как словарь или строка, мы упакуем ее красиво
+        code = f"HTTP_{exc.status_code}_ERROR"
         details = None
         if isinstance(exc.detail, (dict, list)):
-            details = exc.detail
-            message = (
-                exc.detail.get("message", "Произошла ошибка при обработке запроса.")
-                if isinstance(exc.detail, dict)
-                else "Произошла ошибка при обработке запроса."
-            )
+            if isinstance(exc.detail, dict):
+                code = exc.detail.get("code", code)
+                message = exc.detail.get(
+                    "message",
+                    "Произошла ошибка при обработке запроса.",
+                )
+                details = exc.detail.get("details", exc.detail)
+            else:
+                details = exc.detail
+                message = "Произошла ошибка при обработке запроса."
         else:
             message = str(exc.detail)
 
         payload = ErrorResponse(
             error=ErrorDetail(
-                code=f"HTTP_{exc.status_code}_ERROR",
+                code=code,
                 message=message,
                 details=details,
+                request_id=req_id,
+            )
+        )
+        return _error_response(exc.status_code, payload)
+
+    @app.exception_handler(AppServiceError)
+    async def app_service_exception_handler(request: Request, exc: AppServiceError):
+        req_id = _get_request_id(request)
+
+        payload = ErrorResponse(
+            error=ErrorDetail(
+                code=exc.code,
+                message=exc.message,
+                details=exc.details,
                 request_id=req_id,
             )
         )

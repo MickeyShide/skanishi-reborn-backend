@@ -1,0 +1,220 @@
+# app/business/auth.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
+from starlette.responses import Response
+
+from app.config import settings
+from app.core.redis_client import redis_client
+from app.db.repositories.errors import ObjectNotFoundError
+from app.schemas.auth import TelegramAuthRequest, TokenResponse
+from app.schemas.user import UserMe
+from app.services.business.base import BusinessService
+from app.services.errors import (
+    InvalidAccessTokenError,
+    InvalidRefreshTokenError,
+    MissingAuthorizationError,
+    MissingRefreshTokenError,
+)
+from app.services.init_data import TelegramInitDataService
+from app.services.init_data_replay_guard import InitDataReplayGuardService
+from app.services.refresh_session import RefreshSessionService
+from app.services.token import TokenService
+from app.services.user import UserService
+
+
+@dataclass(slots=True)
+class AuthTokenResult:
+    response: TokenResponse
+    refresh_token: str
+
+
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/auth"
+
+
+def get_bearer_token(request: Request) -> str:
+    authorization = request.headers.get("authorization")
+
+    if not authorization:
+        raise MissingAuthorizationError()
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise InvalidAccessTokenError()
+
+    return token.strip()
+
+
+def get_refresh_token(request: Request) -> str:
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise MissingRefreshTokenError()
+
+    return refresh_token
+
+
+def set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        max_age=settings.REFRESH_TOKEN_TTL_SECONDS,
+        path=REFRESH_COOKIE_PATH,
+        domain=settings.COOKIE_DOMAIN,
+        secure=settings.COOKIE_SECURE,
+        httponly=True,
+        samesite=settings.COOKIE_SAMESITE,
+    )
+
+
+def clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        domain=settings.COOKIE_DOMAIN,
+        secure=settings.COOKIE_SECURE,
+        httponly=True,
+        samesite=settings.COOKIE_SAMESITE,
+    )
+
+
+class AuthBusinessService(BusinessService):
+    services = {
+        "user_service": UserService,
+        "token_service": TokenService,
+        "refresh_session_service": RefreshSessionService,
+    }
+
+    telegram_init_data_service: TelegramInitDataService
+    init_data_replay_guard_service: InitDataReplayGuardService
+    user_service: UserService
+    token_service: TokenService
+    refresh_session_service: RefreshSessionService
+
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session)
+        self.telegram_init_data_service = TelegramInitDataService(
+            bot_token=settings.BOT_TOKEN,
+        )
+        self.init_data_replay_guard_service = InitDataReplayGuardService(
+            redis_client,
+        )
+
+    async def authenticate(
+        self, dto: TelegramAuthRequest, request: Request, response: Response
+    ) -> TokenResponse:
+        """
+        Business scenario: Telegram WebApp auth init.
+
+        Возвращает:
+            AuthTokenResult, где refresh-token нужен только API-слою для cookie.
+        """
+
+        # 1. Проверяем подпись, lifetime и парсим Telegram user.
+        telegram_init_data = self.telegram_init_data_service.validate_and_parse(
+            dto.tg_web_app_data,
+        )
+
+        # 2. Опциональная replay-защита.
+        # Если для продукта это не критично, можно убрать этот шаг.
+        await self.init_data_replay_guard_service.ensure_not_replayed(
+            dto.tg_web_app_data,
+        )
+
+        # 3. Найти или создать пользователя.
+        user = await self.user_service.get_or_create_from_telegram(
+            telegram_init_data.user,
+        )
+
+        # 4. Создать токены.
+        access_token = self.token_service.create_access_token(user)
+        refresh_token = self.token_service.create_refresh_token(user)
+
+        # 5. Сохранить refresh-сессию.
+        await self.refresh_session_service.create_refresh_session(
+            user_id=user.id,
+            refresh_token=refresh_token,
+            user_agent=request.headers.get("user-agent"),
+            ip_address=request.client.host if request.client else None,
+        )
+
+        set_refresh_cookie(response, refresh_token)
+
+        # 6. Наружу отдаём только access_token, refresh остается для cookie.
+        return TokenResponse(
+            access_token=access_token,
+            expires_in=settings.ACCESS_TOKEN_TTL_SECONDS,
+            user=UserMe.model_validate(user),
+        )
+
+    async def refresh(self, request: Request, response: Response) -> TokenResponse:
+        refresh_token = get_refresh_token(request)
+        claims = self.token_service.decode_refresh_token(refresh_token)
+        refresh_session = await self.refresh_session_service.get_session_for_refresh(
+            refresh_token,
+        )
+
+        try:
+            user_id = int(claims.sub)
+        except ValueError as exc:
+            raise InvalidRefreshTokenError from exc
+
+        if refresh_session.user_id != user_id:
+            raise InvalidRefreshTokenError()
+
+        try:
+            user = await self.user_service.get_user_by_id(user_id)
+        except ObjectNotFoundError as exc:
+            raise InvalidRefreshTokenError from exc
+
+        access_token = self.token_service.create_access_token(user)
+        new_refresh_token = self.token_service.create_refresh_token(user)
+        new_refresh_session = await self.refresh_session_service.create_refresh_session(
+            user_id=user.id,
+            refresh_token=new_refresh_token,
+            user_agent=request.headers.get("user-agent"),
+            ip_address=request.client.host if request.client else None,
+        )
+        await self.refresh_session_service.revoke_refresh_session(
+            refresh_session,
+            replaced_by_session_id=new_refresh_session.id,
+        )
+
+        set_refresh_cookie(response, new_refresh_token)
+
+        return TokenResponse(
+            access_token=access_token,
+            expires_in=settings.ACCESS_TOKEN_TTL_SECONDS,
+            user=UserMe.model_validate(user),
+        )
+
+    async def logout(self, request: Request, response: Response) -> None:
+
+        refresh_token = get_refresh_token(request)
+
+        if not refresh_token:
+            return
+
+        clear_refresh_cookie(response)
+
+        await self.refresh_session_service.revoke_by_refresh_token(refresh_token)
+
+    async def get_me(self, request: Request) -> UserMe:
+        access_token = get_bearer_token(request)
+        claims = self.token_service.decode_access_token(access_token)
+
+        try:
+            user_id = int(claims.sub)
+        except ValueError as exc:
+            raise InvalidAccessTokenError from exc
+
+        try:
+            user = await self.user_service.get_user_by_id(user_id)
+        except ObjectNotFoundError as exc:
+            raise InvalidAccessTokenError from exc
+
+        return UserMe.model_validate(user)
