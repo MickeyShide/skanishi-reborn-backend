@@ -124,7 +124,8 @@ jobs:
             exit "$migrate_status"
           fi
           docker compose ps -a
-          docker compose up -d --wait --remove-orphans api
+          docker compose rm -f -s api          # остановить и удалить контейнер
+          docker compose up -d --wait api      # создать новый
           docker compose ps -a
           docker image prune -f
           EOF
