@@ -68,6 +68,12 @@ class UserNotFoundError(ServiceError):
     message = "User was not found."
 
 
+class ForbiddenError(ServiceError):
+    status_code = 403
+    code = "forbidden"
+    message = "Forbidden."
+
+
 class ServiceNotReadyError(ServiceError):
     status_code = 503
     code = "service_not_ready"

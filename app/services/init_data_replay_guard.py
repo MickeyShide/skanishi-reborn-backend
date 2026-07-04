@@ -6,6 +6,7 @@ import hashlib
 
 from redis.asyncio import Redis
 
+from app.core.redis_client import redis_fail_open
 from app.services.errors import InitDataReplayError
 
 
@@ -18,11 +19,14 @@ class InitDataReplayGuardService:
         init_data_hash = hashlib.sha256(init_data.encode()).hexdigest()
         key = f"tg_init_data:{init_data_hash}"
 
-        was_set = await self.redis.set(
-            name=key,
-            value="1",
-            ex=self.ttl_seconds,
-            nx=True,
+        was_set = await redis_fail_open(
+            lambda: self.redis.set(
+                name=key,
+                value="1",
+                ex=self.ttl_seconds,
+                nx=True,
+            ),
+            default=True,
         )
 
         if not was_set:

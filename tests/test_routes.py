@@ -3,13 +3,24 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.v1.dependencies import get_current_user
 from app.api.v1 import auth as auth_api
 from app.api.v1 import health as health_api
+from app.config import settings
 from app.db.models.user import UserRole
 from app.main import app
 from app.schemas.auth import TelegramAuthRequest, TokenResponse
 from app.schemas.user import UserMe
-from app.services.errors import InvalidInitDataError, InvalidRefreshTokenError
+from app.services.errors import (
+    ExpiredInitDataError,
+    ExpiredRefreshTokenError,
+    InvalidInitDataError,
+    InvalidRefreshTokenError,
+    InvalidTelegramSignatureError,
+    RefreshReuseDetectedError,
+    RevokedRefreshTokenError,
+    UserNotFoundError,
+)
 
 
 @pytest.fixture
@@ -122,7 +133,7 @@ class TestAuthInitRoute:
         async def fake_authenticate(self, dto, request, response):
             captured["dto"] = dto
             captured["content_type"] = request.headers.get("content-type")
-            response.set_cookie("refresh_token", "refresh-token", path="/auth")
+            response.set_cookie("refresh_token", "refresh-token", path="/auth/refresh")
             return expected_response
 
         with patch.object(
@@ -217,6 +228,46 @@ class TestAuthInitRoute:
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "invalid_init_data"
 
+    def test_init_propagates_invalid_telegram_signature(
+        self,
+        client: TestClient,
+    ) -> None:
+        async def fake_authenticate(self, dto, request, response):
+            raise InvalidTelegramSignatureError()
+
+        with patch.object(
+            auth_api.AuthBusinessService,
+            "authenticate",
+            fake_authenticate,
+        ):
+            response = client.post(
+                "/auth/init",
+                json={"tg_web_app_data": "bad-signature"},
+            )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "invalid_telegram_signature"
+
+    def test_init_propagates_expired_init_data(
+        self,
+        client: TestClient,
+    ) -> None:
+        async def fake_authenticate(self, dto, request, response):
+            raise ExpiredInitDataError()
+
+        with patch.object(
+            auth_api.AuthBusinessService,
+            "authenticate",
+            fake_authenticate,
+        ):
+            response = client.post(
+                "/auth/init",
+                json={"tg_web_app_data": "expired-init-data"},
+            )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "expired_init_data"
+
 
 class TestAuthRefreshRoute:
     def test_refresh_returns_rotated_tokens(
@@ -228,7 +279,11 @@ class TestAuthRefreshRoute:
 
         async def fake_refresh(self, request, response):
             captured["cookie"] = request.cookies.get("refresh_token")
-            response.set_cookie("refresh_token", "new-refresh-token", path="/auth")
+            response.set_cookie(
+                "refresh_token",
+                "new-refresh-token",
+                path="/auth/refresh",
+            )
             return expected_response
 
         with patch.object(auth_api.AuthBusinessService, "refresh", fake_refresh):
@@ -241,6 +296,7 @@ class TestAuthRefreshRoute:
         assert response.json() == expected_response.model_dump(mode="json")
         assert captured["cookie"] == "old-refresh-token"
         assert "refresh_token=new-refresh-token" in response.headers["set-cookie"]
+        assert "Path=/auth/refresh" in response.headers["set-cookie"]
 
     def test_refresh_requires_refresh_cookie(
         self,
@@ -267,6 +323,71 @@ class TestAuthRefreshRoute:
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "invalid_refresh_token"
 
+    @pytest.mark.parametrize(
+        ("exc", "expected_status", "expected_code"),
+        [
+            (ExpiredRefreshTokenError(), 401, "expired_refresh_token"),
+            (RevokedRefreshTokenError(), 401, "revoked_refresh_token"),
+            (RefreshReuseDetectedError(), 403, "refresh_reuse_detected"),
+        ],
+    )
+    def test_refresh_propagates_security_errors(
+        self,
+        client: TestClient,
+        exc,
+        expected_status: int,
+        expected_code: str,
+    ) -> None:
+        async def fake_refresh(self, request, response):
+            raise exc
+
+        with patch.object(auth_api.AuthBusinessService, "refresh", fake_refresh):
+            response = client.post(
+                "/auth/refresh",
+                cookies={"refresh_token": "broken-token"},
+            )
+
+        assert response.status_code == expected_status
+        assert response.json()["error"]["code"] == expected_code
+
+    def test_refresh_requires_csrf_header_when_samesite_none(
+        self,
+        client: TestClient,
+    ) -> None:
+        with patch.object(settings, "COOKIE_SAMESITE", "none"):
+            response = client.post(
+                "/auth/refresh",
+                cookies={
+                    "refresh_token": "refresh-token",
+                    "csrf_token": "csrf-token",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "forbidden"
+
+    def test_refresh_accepts_matching_csrf_header_when_samesite_none(
+        self,
+        client: TestClient,
+    ) -> None:
+        async def fake_refresh(self, request, response):
+            return build_token_response("csrf-safe-access-token")
+
+        with (
+            patch.object(settings, "COOKIE_SAMESITE", "none"),
+            patch.object(auth_api.AuthBusinessService, "refresh", fake_refresh),
+        ):
+            response = client.post(
+                "/auth/refresh",
+                cookies={
+                    "refresh_token": "refresh-token",
+                    "csrf_token": "csrf-token",
+                },
+                headers={"X-CSRF-Token": "csrf-token"},
+            )
+
+        assert response.status_code == 200
+
 
 class TestAuthLogoutRoute:
     def test_logout_revokes_session_and_returns_204(
@@ -285,6 +406,22 @@ class TestAuthLogoutRoute:
         assert response.content == b""
         assert fake_logout.await_count == 1
 
+    def test_logout_requires_csrf_header_when_samesite_none(
+        self,
+        client: TestClient,
+    ) -> None:
+        with patch.object(settings, "COOKIE_SAMESITE", "none"):
+            response = client.post(
+                "/auth/logout",
+                cookies={
+                    "refresh_token": "refresh-token",
+                    "csrf_token": "csrf-token",
+                },
+            )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "forbidden"
+
     def test_logout_without_cookie_is_idempotent(
         self,
         client: TestClient,
@@ -302,14 +439,17 @@ class TestAuthMeRoute:
     ) -> None:
         user = build_user_me()
 
-        async def fake_get_me(self, request):
+        async def fake_current_user():
             return user
 
-        with patch.object(auth_api.AuthBusinessService, "get_me", fake_get_me):
+        app.dependency_overrides[get_current_user] = fake_current_user
+        try:
             response = client.get(
                 "/auth/me",
                 headers={"Authorization": "Bearer access-token"},
             )
+        finally:
+            app.dependency_overrides.clear()
 
         assert response.status_code == 200
         assert response.json() == user.model_dump(mode="json")
@@ -334,3 +474,22 @@ class TestAuthMeRoute:
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "invalid_access_token"
+
+    def test_me_returns_not_found_when_user_is_missing(
+        self,
+        client: TestClient,
+    ) -> None:
+        async def fake_current_user():
+            raise UserNotFoundError()
+
+        app.dependency_overrides[get_current_user] = fake_current_user
+        try:
+            response = client.get(
+                "/auth/me",
+                headers={"Authorization": "Bearer access-token"},
+            )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "user_not_found"

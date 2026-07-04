@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
+from app.api.v1.dependencies import CurrentUser, enforce_csrf_protection
 from app.schemas.auth import TelegramAuthRequest, TokenResponse
 from app.schemas.user import UserMe
 from app.services.business.auth import AuthBusinessService
@@ -73,16 +74,24 @@ async def auth_init(
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    dependencies=[Depends(enforce_csrf_protection)],
+)
 async def auth_refresh(request: Request, response: Response):
     return await AuthBusinessService().refresh(request=request, response=response)
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(enforce_csrf_protection)],
+)
 async def auth_logout(request: Request, response: Response) -> None:
     await AuthBusinessService().logout(request=request, response=response)
 
 
 @router.get("/me", response_model=UserMe)
-async def auth_me(request: Request):
-    return await AuthBusinessService().get_me(request=request)
+async def auth_me(current_user: CurrentUser):
+    return UserMe.model_validate(current_user)

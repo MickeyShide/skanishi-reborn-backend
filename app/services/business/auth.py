@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
@@ -19,6 +20,7 @@ from app.services.errors import (
     InvalidRefreshTokenError,
     MissingAuthorizationError,
     MissingRefreshTokenError,
+    UserNotFoundError,
 )
 from app.services.init_data import TelegramInitDataService
 from app.services.init_data_replay_guard import InitDataReplayGuardService
@@ -34,7 +36,14 @@ class AuthTokenResult:
 
 
 REFRESH_COOKIE_NAME = "refresh_token"
-REFRESH_COOKIE_PATH = "/auth"
+REFRESH_COOKIE_PATH = "/auth/refresh"
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_COOKIE_PATH = "/auth"
+CSRF_HEADER_NAME = "X-CSRF-Token"
+
+
+def csrf_protection_enabled() -> bool:
+    return settings.COOKIE_SAMESITE == "none"
 
 
 def get_bearer_token(request: Request) -> str:
@@ -71,6 +80,21 @@ def set_refresh_cookie(response: Response, refresh_token: str) -> None:
     )
 
 
+def set_csrf_cookie(response: Response) -> None:
+    if not csrf_protection_enabled():
+        return
+
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=secrets.token_urlsafe(32),
+        path=CSRF_COOKIE_PATH,
+        domain=settings.COOKIE_DOMAIN,
+        secure=settings.COOKIE_SECURE,
+        httponly=False,
+        samesite=settings.COOKIE_SAMESITE,
+    )
+
+
 def clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key=REFRESH_COOKIE_NAME,
@@ -78,6 +102,20 @@ def clear_refresh_cookie(response: Response) -> None:
         domain=settings.COOKIE_DOMAIN,
         secure=settings.COOKIE_SECURE,
         httponly=True,
+        samesite=settings.COOKIE_SAMESITE,
+    )
+
+
+def clear_csrf_cookie(response: Response) -> None:
+    if not csrf_protection_enabled():
+        return
+
+    response.delete_cookie(
+        key=CSRF_COOKIE_NAME,
+        path=CSRF_COOKIE_PATH,
+        domain=settings.COOKIE_DOMAIN,
+        secure=settings.COOKIE_SECURE,
+        httponly=False,
         samesite=settings.COOKIE_SAMESITE,
     )
 
@@ -138,6 +176,7 @@ class AuthBusinessService(BusinessService):
         )
 
         set_refresh_cookie(response, refresh_token)
+        set_csrf_cookie(response)
 
         # 6. Наружу отдаём только access_token, refresh остается для cookie.
         return TokenResponse(
@@ -185,6 +224,7 @@ class AuthBusinessService(BusinessService):
         )
 
         set_refresh_cookie(response, new_refresh_token)
+        set_csrf_cookie(response)
 
         return TokenResponse(
             access_token=access_token,
@@ -198,6 +238,7 @@ class AuthBusinessService(BusinessService):
             return
 
         clear_refresh_cookie(response)
+        clear_csrf_cookie(response)
 
         await self.refresh_session_service.revoke_by_refresh_token(refresh_token)
 
@@ -213,6 +254,6 @@ class AuthBusinessService(BusinessService):
         try:
             user = await self.user_service.get_user_by_id(user_id)
         except ObjectNotFoundError as exc:
-            raise InvalidAccessTokenError from exc
+            raise UserNotFoundError from exc
 
         return UserMe.model_validate(user)
