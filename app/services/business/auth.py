@@ -129,7 +129,7 @@ class AuthBusinessService(BusinessService):
 
     def __init__(self, session: AsyncSession | None = None) -> None:
         super().__init__(session)
-        self.token_service = TokenService(session=session)
+        self.token_service = TokenService()
         self.telegram_init_data_service = TelegramInitDataService(
             bot_token=settings.BOT_TOKEN,
         )

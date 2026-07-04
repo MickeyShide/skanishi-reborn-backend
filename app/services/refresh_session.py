@@ -27,7 +27,7 @@ class RefreshSessionService(BaseService):
 
     def __init__(self, session) -> None:
         super().__init__(session)
-        self.token_service = TokenService(session=session)
+        self.token_service = TokenService()
 
     @staticmethod
     def hash_refresh_token(refresh_token: str) -> str:

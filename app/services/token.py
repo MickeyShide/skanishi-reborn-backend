@@ -23,14 +23,12 @@ from app.services.errors import (
 class TokenService:
     def __init__(
         self,
-        session: object | None = None,
         *,
         secret_key: str | None = None,
         algorithm: str | None = None,
         access_ttl_minutes: int | None = None,
         refresh_ttl_days: int | None = None,
     ) -> None:
-        self.session = session
         self.secret_key = secret_key or settings.SECRET_KEY
         self.algorithm = algorithm or settings.JWT_ALGORITHM
         self.access_ttl_seconds = (
