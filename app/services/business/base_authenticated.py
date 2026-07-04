@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,16 +19,12 @@ class AuthenticatedBusinessService(BusinessService):
     которым нужен текущий авторизованный пользователь.
     """
 
-    services: ClassVar[dict[str, type[Any]]] = {
-        "user_service": UserService,
-    }
-
     user_service: UserService
 
     def __init__(
         self,
-        session: AsyncSession,
         token_data: dict[str, Any] | None,
+        session: AsyncSession | None = None,
     ) -> None:
         super().__init__(session)
         self.token_data = token_data

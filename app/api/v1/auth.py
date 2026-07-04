@@ -6,9 +6,7 @@ from urllib.parse import parse_qsl
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_session
 from app.schemas.auth import TelegramAuthRequest, TokenResponse
 from app.schemas.user import UserMe
 from app.services.business.auth import AuthBusinessService
@@ -63,46 +61,28 @@ async def parse_telegram_auth_request(request: Request) -> TelegramAuthRequest:
 
 
 @router.post(
-    "/init",
-    response_model=TokenResponse,
-    openapi_extra=AUTH_INIT_OPENAPI_EXTRA,
+    "/init", response_model=TokenResponse, openapi_extra=AUTH_INIT_OPENAPI_EXTRA
 )
 async def auth_init(
     dto: Annotated[TelegramAuthRequest, Depends(parse_telegram_auth_request)],
     request: Request,
     response: Response,
-    session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    return await AuthBusinessService(session=session).authenticate(
+    return await AuthBusinessService().authenticate(
         dto=dto, request=request, response=response
     )
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def auth_refresh(
-    request: Request,
-    response: Response,
-    session: Annotated[AsyncSession, Depends(get_session)],
-):
-    return await AuthBusinessService(session=session).refresh(
-        request=request, response=response
-    )
+async def auth_refresh(request: Request, response: Response):
+    return await AuthBusinessService().refresh(request=request, response=response)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def auth_logout(
-    request: Request,
-    response: Response,
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> None:
-    await AuthBusinessService(session=session).logout(
-        request=request, response=response
-    )
+async def auth_logout(request: Request, response: Response) -> None:
+    await AuthBusinessService().logout(request=request, response=response)
 
 
 @router.get("/me", response_model=UserMe)
-async def auth_me(
-    session: Annotated[AsyncSession, Depends(get_session)],
-    request: Request,
-):
-    return await AuthBusinessService(session=session).get_me(request=request)
+async def auth_me(request: Request):
+    return await AuthBusinessService().get_me(request=request)

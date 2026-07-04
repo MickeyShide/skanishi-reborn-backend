@@ -10,7 +10,11 @@ class Validation(BaseSQLModel, table=True):
     user_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("users.id", ondelete="CASCADE"),
+            ForeignKey(
+                "users.id",
+                ondelete="CASCADE",
+                name="fk_validations_user_id_users",
+            ),
             nullable=False,
         ),
     )
@@ -18,7 +22,11 @@ class Validation(BaseSQLModel, table=True):
     item_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("items.id", ondelete="CASCADE"),
+            ForeignKey(
+                "items.id",
+                ondelete="CASCADE",
+                name="fk_validations_item_id_items",
+            ),
             nullable=False,
         ),
     )
@@ -26,7 +34,11 @@ class Validation(BaseSQLModel, table=True):
     item_secret_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("item_secrets.id", ondelete="RESTRICT"),
+            ForeignKey(
+                "item_secrets.id",
+                ondelete="RESTRICT",
+                name="fk_validations_item_secret_id_item_secrets",
+            ),
             nullable=False,
         ),
     )

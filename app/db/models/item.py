@@ -25,21 +25,21 @@ class Item(BaseSQLModel, table=True):
     prototype_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("prototypes.id"),
+            ForeignKey("prototypes.id", name="fk_items_prototype_id_prototypes"),
             nullable=False,
         ),
     )
     category_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("categories.id"),
+            ForeignKey("categories.id", name="fk_items_category_id_categories"),
             nullable=False,
         ),
     )
     type_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("types.id"),
+            ForeignKey("types.id", name="fk_items_type_id_types"),
             nullable=False,
         ),
     )

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, text
+from sqlalchemy import BigInteger, CHAR, Column, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlmodel import Field, Index
 
@@ -14,14 +14,18 @@ class RefreshSession(BaseSQLModel, table=True):
     user_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("users.id", ondelete="CASCADE"),
+            ForeignKey(
+                "users.id",
+                ondelete="CASCADE",
+                name="fk_refresh_sessions_user_id_users",
+            ),
             nullable=False,
         ),
     )
 
     jti: uuid.UUID = Field(sa_type=UUID(as_uuid=True), nullable=False)
 
-    token_hash: str = Field(sa_type=String(64), nullable=False)
+    token_hash: str = Field(sa_type=CHAR(64), nullable=False)
 
     ip_address: str | None = Field(sa_type=String(45), nullable=True)
     user_agent: str | None = Field(default=None, nullable=True)
@@ -43,7 +47,11 @@ class RefreshSession(BaseSQLModel, table=True):
         default=None,
         sa_column=Column(
             BigInteger,
-            ForeignKey("refresh_sessions.id", ondelete="SET NULL"),
+            ForeignKey(
+                "refresh_sessions.id",
+                ondelete="SET NULL",
+                name="fk_refresh_sessions_replaced_by_session_id_refresh_sessions",
+            ),
             nullable=True,
         ),
     )

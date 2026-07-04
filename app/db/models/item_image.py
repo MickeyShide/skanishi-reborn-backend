@@ -19,7 +19,7 @@ class ItemImage(BaseSQLModel, table=True):
     item_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("items.id"),
+            ForeignKey("items.id", name="fk_item_images_item_id_items"),
             nullable=False,
         ),
     )

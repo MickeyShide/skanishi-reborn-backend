@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, text
+from sqlalchemy import BigInteger, CHAR, Column, DateTime, ForeignKey, String, text
 from sqlmodel import Field, Index
 
 from app.db.models.base import BaseSQLModel
@@ -12,13 +12,17 @@ class ItemSecret(BaseSQLModel, table=True):
     item_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("items.id", ondelete="CASCADE"),
+            ForeignKey(
+                "items.id",
+                ondelete="CASCADE",
+                name="fk_item_secrets_item_id_items",
+            ),
             nullable=False,
         ),
     )
 
     secret_hash: str = Field(
-        sa_type=String(64),
+        sa_type=CHAR(64),
         nullable=False,
     )
 

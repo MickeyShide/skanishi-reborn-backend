@@ -83,20 +83,15 @@ def clear_refresh_cookie(response: Response) -> None:
 
 
 class AuthBusinessService(BusinessService):
-    services = {
-        "user_service": UserService,
-        "token_service": TokenService,
-        "refresh_session_service": RefreshSessionService,
-    }
-
     telegram_init_data_service: TelegramInitDataService
     init_data_replay_guard_service: InitDataReplayGuardService
     user_service: UserService
     token_service: TokenService
     refresh_session_service: RefreshSessionService
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession | None = None) -> None:
         super().__init__(session)
+        self.token_service = TokenService(session=session)
         self.telegram_init_data_service = TelegramInitDataService(
             bot_token=settings.BOT_TOKEN,
         )
@@ -154,14 +149,17 @@ class AuthBusinessService(BusinessService):
     async def refresh(self, request: Request, response: Response) -> TokenResponse:
         refresh_token = get_refresh_token(request)
         claims = self.token_service.decode_refresh_token(refresh_token)
-        refresh_session = await self.refresh_session_service.get_session_for_refresh(
-            refresh_token,
-        )
 
         try:
             user_id = int(claims.sub)
         except ValueError as exc:
             raise InvalidRefreshTokenError from exc
+
+        refresh_session = (
+            await self.refresh_session_service.get_session_for_refresh(
+                refresh_token,
+            )
+        )
 
         if refresh_session.user_id != user_id:
             raise InvalidRefreshTokenError()
@@ -173,11 +171,13 @@ class AuthBusinessService(BusinessService):
 
         access_token = self.token_service.create_access_token(user)
         new_refresh_token = self.token_service.create_refresh_token(user)
-        new_refresh_session = await self.refresh_session_service.create_refresh_session(
-            user_id=user.id,
-            refresh_token=new_refresh_token,
-            user_agent=request.headers.get("user-agent"),
-            ip_address=request.client.host if request.client else None,
+        new_refresh_session = (
+            await self.refresh_session_service.create_refresh_session(
+                user_id=user.id,
+                refresh_token=new_refresh_token,
+                user_agent=request.headers.get("user-agent"),
+                ip_address=request.client.host if request.client else None,
+            )
         )
         await self.refresh_session_service.revoke_refresh_session(
             refresh_session,
@@ -193,9 +193,7 @@ class AuthBusinessService(BusinessService):
         )
 
     async def logout(self, request: Request, response: Response) -> None:
-
-        refresh_token = get_refresh_token(request)
-
+        refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
         if not refresh_token:
             return
 

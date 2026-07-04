@@ -3,7 +3,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import PostgresDsn, RedisDsn, field_validator
+from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -22,18 +22,18 @@ class Settings(BaseSettings):
 
     REDIS_URL: RedisDsn
 
-    SECRET_KEY: str
-    JWT_ALGORITHM: str
-    ACCESS_TOKEN_TTL_SECONDS: int
-    REFRESH_TOKEN_TTL_SECONDS: int
+    SECRET_KEY: str = Field(min_length=32)
+    JWT_ALGORITHM: str = Field(min_length=1)
+    ACCESS_TOKEN_TTL_SECONDS: int = Field(gt=0)
+    REFRESH_TOKEN_TTL_SECONDS: int = Field(gt=0)
 
-    BOT_TOKEN: str
+    BOT_TOKEN: str = Field(min_length=1)
 
     FRONTEND_ORIGINS: Annotated[list[str], NoDecode]
 
     COOKIE_DOMAIN: str | None = None
     COOKIE_SECURE: bool
-    COOKIE_SAMESITE: Literal["strict", "lax", "none"]
+    COOKIE_SAMESITE: Literal["lax", "none"]
 
     SQL_ECHO: bool
 
@@ -55,6 +55,14 @@ class Settings(BaseSettings):
 
         return value
 
+    @field_validator("FRONTEND_ORIGINS")
+    @classmethod
+    def validate_frontend_origins(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("FRONTEND_ORIGINS must contain at least one origin.")
+
+        return value
+
     @field_validator("COOKIE_DOMAIN", mode="before")
     @classmethod
     def parse_cookie_domain(cls, value: object) -> object:
@@ -62,6 +70,16 @@ class Settings(BaseSettings):
             return None
 
         return value
+
+    @model_validator(mode="after")
+    def validate_environment_rules(self) -> "Settings":
+        if self.APP_ENV == Environment.PROD:
+            if not self.COOKIE_SECURE:
+                raise ValueError("COOKIE_SECURE must be true in prod.")
+            if self.SQL_ECHO:
+                raise ValueError("SQL_ECHO must be false in prod.")
+
+        return self
 
 
 settings = Settings()

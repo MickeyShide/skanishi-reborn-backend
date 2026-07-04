@@ -1,7 +1,7 @@
-import inspect
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 from fastapi.testclient import TestClient
@@ -18,6 +18,8 @@ from app.schemas.auth import (
     TelegramAuthRequest,
 )
 from app.services.business.auth import AuthBusinessService
+from app.services.business.base import BusinessService
+from app.services.errors import MissingRefreshTokenError
 from app.services.init_data import TelegramUserData
 from app.services.token import TokenService
 from app.services.user import UserService
@@ -117,14 +119,22 @@ class AuthEndpointContractTests(TestCase):
             "валидироваться как 422, а не пропадать с 404.",
         )
 
-    def test_auth_init_handler_exposes_session_dependency(self) -> None:
+    def test_auth_init_handler_does_not_expose_session_dependency(self) -> None:
+        import inspect
+
         parameters = inspect.signature(auth_api.auth_init).parameters
 
-        self.assertIn(
+        self.assertNotIn(
             "session",
             parameters,
-            "Хендлеру нужен доступ к AsyncSession, иначе AuthBusinessService "
-            "нельзя корректно создать как instance service.",
+            "HTTP-хендлер не должен вручную принимать AsyncSession: "
+            "бизнес-сервис сам владеет DB-сессией для сценария.",
+        )
+        self.assertNotIn(
+            "auth_service",
+            parameters,
+            "HTTP-хендлер не должен требовать DI-зависимость бизнес-сервиса: "
+            "AuthBusinessService создаётся внутри хендлера и сам владеет сессией.",
         )
 
     def test_auth_refresh_requires_refresh_cookie(self) -> None:
@@ -141,7 +151,20 @@ class AuthEndpointContractTests(TestCase):
 
 
 class AuthBusinessServiceConstructionTests(TestCase):
-    def test_auth_business_service_can_be_constructed_with_session(self) -> None:
+    def test_auth_business_service_can_be_constructed_without_session(self) -> None:
+        try:
+            service = AuthBusinessService()
+        except TypeError as exc:
+            self.fail(
+                "Конструктор AuthBusinessService не должен требовать AsyncSession: "
+                f"{exc}"
+            )
+
+        self.assertIsNone(service.session)
+        self.assertTrue(hasattr(service, "telegram_init_data_service"))
+        self.assertTrue(hasattr(service, "token_service"))
+
+    def test_auth_business_service_still_accepts_existing_session(self) -> None:
         try:
             service = AuthBusinessService(session=object())
         except TypeError as exc:
@@ -153,6 +176,53 @@ class AuthBusinessServiceConstructionTests(TestCase):
 
         self.assertTrue(hasattr(service, "telegram_init_data_service"))
         self.assertTrue(hasattr(service, "token_service"))
+
+
+class BusinessServiceLazySessionTests(IsolatedAsyncioTestCase):
+    async def test_opens_session_on_child_service_use_and_closes_after_scenario(
+        self,
+    ) -> None:
+        session = object()
+        events: list[str] = []
+
+        class ChildService:
+            def __init__(self, session) -> None:
+                self.session = session
+
+            async def get_session(self):
+                return self.session
+
+        class LazyBusinessService(BusinessService):
+            services = {"child_service": ChildService}
+
+            async def run(self):
+                return await self.child_service.get_session()
+
+        @asynccontextmanager
+        async def fake_session_context():
+            events.append("open")
+            try:
+                yield session
+            finally:
+                events.append("close")
+
+        with patch("app.services.business.base.session_context", fake_session_context):
+            service = LazyBusinessService()
+            result = await service.run()
+
+        self.assertIs(result, session)
+        self.assertIsNone(service.session)
+        self.assertEqual(events, ["open", "close"])
+
+    async def test_refresh_without_cookie_does_not_open_session(self) -> None:
+        service = AuthBusinessService()
+        request = SimpleNamespace(cookies={}, headers={})
+
+        with patch("app.services.business.base.session_context") as session_context:
+            with self.assertRaises(MissingRefreshTokenError):
+                await service.refresh(request=request, response=Response())
+
+        session_context.assert_not_called()
 
 
 class UserServiceTelegramMappingTests(IsolatedAsyncioTestCase):

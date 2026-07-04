@@ -46,7 +46,7 @@ class ErrorHandlerTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()["error"]["code"], "HTTP_404_ERROR")
+        self.assertEqual(response.json()["error"]["code"], "not_found")
         assert_error_response_has_request_id(self, response)
 
     def test_validation_errors_use_common_format_with_request_id(self) -> None:
@@ -57,7 +57,7 @@ class ErrorHandlerTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+        self.assertEqual(response.json()["error"]["code"], "validation_error")
         assert_error_response_has_request_id(self, response)
 
     def test_unhandled_errors_use_common_format_with_request_id(self) -> None:
@@ -67,5 +67,5 @@ class ErrorHandlerTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 500)
-        self.assertEqual(response.json()["error"]["code"], "INTERNAL_SERVER_ERROR")
+        self.assertEqual(response.json()["error"]["code"], "internal_error")
         assert_error_response_has_request_id(self, response)

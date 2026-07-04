@@ -1,4 +1,5 @@
 import logging
+from http import HTTPStatus
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -10,6 +11,18 @@ from app.schemas.common import ErrorDetail, ErrorResponse
 from app.services.errors import AppServiceError
 
 logger = logging.getLogger("app")
+
+
+HTTP_ERROR_CODES: dict[int, str] = {
+    status.HTTP_400_BAD_REQUEST: "bad_request",
+    status.HTTP_401_UNAUTHORIZED: "unauthorized",
+    status.HTTP_403_FORBIDDEN: "forbidden",
+    status.HTTP_404_NOT_FOUND: "not_found",
+    status.HTTP_409_CONFLICT: "conflict",
+    status.HTTP_422_UNPROCESSABLE_CONTENT: "validation_error",
+    status.HTTP_500_INTERNAL_SERVER_ERROR: "internal_error",
+    status.HTTP_503_SERVICE_UNAVAILABLE: "service_not_ready",
+}
 
 
 def _get_request_id(request: Request) -> str | None:
@@ -47,13 +60,13 @@ def register_error_handlers(app: FastAPI) -> None:
 
         payload = ErrorResponse(
             error=ErrorDetail(
-                code="VALIDATION_ERROR",
-                message="Введенные данные не прошли валидацию.",
+                code="validation_error",
+                message="Request validation failed.",
                 details=exc.errors(),  # Массив с указанием loc, msg, type от Pydantic
                 request_id=req_id,
             )
         )
-        return _error_response(status.HTTP_422_UNPROCESSABLE_ENTITY, payload)
+        return _error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, payload)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
@@ -63,21 +76,17 @@ def register_error_handlers(app: FastAPI) -> None:
         """
         req_id = _get_request_id(request)
 
-        # ТЗ требует разделять причины JWT errors и возвращать 400 вместо 500
-        # Если деталь ошибки передана как словарь или строка, мы упакуем ее красиво
-        code = f"HTTP_{exc.status_code}_ERROR"
+        code = HTTP_ERROR_CODES.get(exc.status_code, "http_error")
+        message = HTTPStatus(exc.status_code).phrase
         details = None
+
         if isinstance(exc.detail, (dict, list)):
             if isinstance(exc.detail, dict):
                 code = exc.detail.get("code", code)
-                message = exc.detail.get(
-                    "message",
-                    "Произошла ошибка при обработке запроса.",
-                )
-                details = exc.detail.get("details", exc.detail)
+                message = exc.detail.get("message", message)
+                details = exc.detail.get("details")
             else:
                 details = exc.detail
-                message = "Произошла ошибка при обработке запроса."
         else:
             message = str(exc.detail)
 
@@ -121,8 +130,8 @@ def register_error_handlers(app: FastAPI) -> None:
 
         payload = ErrorResponse(
             error=ErrorDetail(
-                code="INTERNAL_SERVER_ERROR",
-                message="Внутренняя ошибка сервера. Мы уже работаем над исправлением.",
+                code="internal_error",
+                message="Internal server error.",
                 request_id=req_id,
             )
         )

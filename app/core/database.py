@@ -1,8 +1,6 @@
 import contextlib
-import functools
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import ParamSpec, TypeVar
 
 from sqlalchemy import exc as sa_exc
 from sqlalchemy import text
@@ -15,9 +13,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
-
-P = ParamSpec("P")
-R = TypeVar("R")
 
 
 class Base(DeclarativeBase):
@@ -72,45 +67,6 @@ async def session_context() -> AsyncIterator[AsyncSession]:
                 with contextlib.suppress(sa_exc.InvalidRequestError):
                     await session.rollback()
                 raise
-
-
-async def get_session() -> AsyncGenerator[AsyncSession]:
-    async with session_context() as session:
-        yield session
-
-
-def new_session(
-    *, readonly: bool = False
-) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
-    def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
-        @functools.wraps(func)
-        async def wrapper(self, *args: P.args, **kwargs: P.kwargs) -> R:
-            if async_session_maker is None:
-                init_engine()
-
-            if async_session_maker is None:
-                raise RuntimeError("Engine is not initialized.")
-
-            if readonly:
-                async with async_session_maker() as session:
-                    self.session = session
-                    try:
-                        result = await func(self, *args, **kwargs)
-                        await session.rollback()
-                        return result
-                    finally:
-                        self.session = None
-
-            async with session_context() as session:
-                self.session = session
-                try:
-                    return await func(self, *args, **kwargs)
-                finally:
-                    self.session = None
-
-        return wrapper
-
-    return decorator
 
 
 async def check_database() -> None:

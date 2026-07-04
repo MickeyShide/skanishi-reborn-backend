@@ -28,8 +28,9 @@ class HealthTests(TestCase):
         self.assertEqual(
             response.json(),
             {
-                "status": "ok",
-                "checks": {"database": "ok", "redis": "ok"},
+                "status": "ready",
+                "db": "ok",
+                "redis": "ok",
             },
         )
 
@@ -47,11 +48,11 @@ class HealthTests(TestCase):
             response = TestClient(app).get("/health/ready")
 
         self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["error"]["code"], "HTTP_503_ERROR")
+        self.assertEqual(response.json()["error"]["code"], "service_not_ready")
         self.assertEqual(
-            response.json()["error"]["details"]["checks"],
+            response.json()["error"]["details"],
             {
-                "database": "ok",
-                "redis": "error",
+                "db": "ok",
+                "redis": "failed",
             },
         )

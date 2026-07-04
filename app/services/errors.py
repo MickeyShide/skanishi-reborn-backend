@@ -68,6 +68,12 @@ class UserNotFoundError(ServiceError):
     message = "User was not found."
 
 
+class ServiceNotReadyError(ServiceError):
+    status_code = 503
+    code = "service_not_ready"
+    message = "Service is not ready."
+
+
 # app/business/errors.py
 
 

@@ -19,7 +19,7 @@ class Prototype(BaseSQLModel, table=True):
     type_id: int = Field(
         sa_column=Column(
             BigInteger,
-            ForeignKey("types.id"),
+            ForeignKey("types.id", name="fk_prototypes_type_id_types"),
             nullable=False,
         ),
     )
