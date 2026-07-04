@@ -1,12 +1,24 @@
-# Техническое задание на backend Compactics
+# Техническое задание на backend [БЫЛО: Compactics] -> [СТАЛО: Skanshi]
 
 Версия документа: 1.0  
-Дата: 2026-06-29  
+Дата: [БЫЛО: 2026-06-29] -> [СТАЛО: 2026-07-04]  
 Область: только backend, без frontend, CSS, HTML и клиентской логики.
+
+[ДОБАВЛЕНО] Основание изменения: фронтенд-проект называется `Skanshi Telegram Mini App` и содержит маршруты/экраны Skanshi, а не Compactics. См. `frontend/README.md`, `frontend/index.html`, `frontend/src/App.jsx`.
+
+[ДОБАВЛЕНО] Статус сверки с фронтендом: текущий фронтенд фактически выполняет только один backend HTTP-запрос — `GET /map/api-key` без префикса `/api/v1`. Все остальные данные экранов сейчас берутся из `frontend/src/data/mockData.js`, auth-token не хранится и не отправляется, `Authorization: Bearer ...` в коде отсутствует, websocket/EventSource не используются. Поэтому ниже явно разделены:
+
+- обязательный контракт для текущего фронтенда;
+- DTO экранов, которые фронт уже ожидает по структуре mock-данных;
+- production/backend roadmap endpoints, которые в текущей сборке фронта не вызываются.
+
+Причина: `frontend/src/hooks/useYMapLoader.js:28` вызывает `fetch('/map/api-key', { credentials: 'include' })`; `frontend/src/context/AppStateContext.jsx` импортирует данные из `mockData.js`; поиск по `Authorization`, `Bearer`, `WebSocket`, `EventSource` в `src` не находит backend-интеграции.
 
 ## 1. Цель проекта
 
-Backend Compactics обслуживает Telegram Mini App / web-приложение для коллекционирования предметов. Пользователь авторизуется через Telegram `initData`, получает access-token и refresh-cookie, просматривает каталог предметов, сканирует QR/startapp-секреты, получает предметы в свою коллекцию, видит свой прогресс и рейтинг по конкретному предмету.
+[БЫЛО: Backend Compactics обслуживает Telegram Mini App / web-приложение для коллекционирования предметов. Пользователь авторизуется через Telegram `initData`, получает access-token и refresh-cookie, просматривает каталог предметов, сканирует QR/startapp-секреты, получает предметы в свою коллекцию, видит свой прогресс и рейтинг по конкретному предмету.] -> [СТАЛО: Backend Skanshi обслуживает Telegram Mini App / web-приложение для AR-квестов, городской карты, точек сканирования, XP, квестов, достижений и профиля пользователя. Для текущей версии фронтенда обязательный backend-контракт состоит из runtime endpoint `GET /map/api-key`; остальные экраны пока получают данные из локальных mock-структур, но backend-ТЗ фиксирует их DTO, чтобы последующая серверная интеграция не расходилась с UI.]
+
+// ИЗМЕНЕНО: фронтенд содержит экраны `home`, `map`, `scan`, `quests`, `profile`, `xp`, `achievements`; каталог предметов и рейтинг по item в текущем frontend-коде не вызываются. См. `frontend/src/App.jsx`, `frontend/src/data/mockData.js`.
 
 Цель переписывания с нуля: сохранить текущую бизнес-идею, но построить backend как production-ready сервис:
 
@@ -107,6 +119,7 @@ Telegram:
 | `COOKIE_SAMESITE` | enum | `lax` или `none` | SameSite policy |
 | `SQL_ECHO` | bool | `false` | SQL debug, в prod всегда false |
 | `LOG_LEVEL` | str | `INFO` | Уровень логирования |
+| [ДОБАВЛЕНО] `YANDEX_MAPS_API_KEY` | str/null | `yandex-api-key` | Ключ Яндекс.Карт v3, который backend возвращает через `GET /map/api-key`, если ключ не внедрен во фронт через `VITE_YMAP_API_KEY`/`VITE_YANDEX_MAPS_API_KEY` |
 
 Правила:
 
@@ -115,6 +128,9 @@ Telegram:
 - `FRONTEND_ORIGINS` задается списком точных origins. Не добавлять localhost в production.
 - Alembic должен брать `DATABASE_URL` из окружения, а не из файла миграций.
 - Docker Compose для production не должен публиковать наружу порты PostgreSQL и Redis.
+- [ДОБАВЛЕНО] Для `YANDEX_MAPS_API_KEY` обязательно настроить ограничения по allowed domains/origins в кабинете Яндекс.Карт. Этот ключ попадает в browser и не должен считаться серверным секретом уровня `BOT_TOKEN`.
+
+// ИЗМЕНЕНО: фронт сначала ищет ключ в `window.RUNTIME_CONFIG?.VITE_YMAP_API_KEY`, `window.RUNTIME_CONFIG?.YMAP_API_KEY`, `import.meta.env.VITE_YMAP_API_KEY`, `import.meta.env.VITE_YANDEX_MAPS_API_KEY`, а при отсутствии вызывает `GET /map/api-key`. См. `frontend/src/hooks/useYMapLoader.js:11-28`.
 
 ## 5. Архитектура проекта
 
@@ -126,10 +142,15 @@ backend/
     main.py
     config.py
     api/
+      runtime.py
       v1/
         router.py
         auth.py
         items.py
+        map_points.py
+        quests.py
+        achievements.py
+        xp.py
         profile.py
         user_settings.py
         admin.py
@@ -149,11 +170,19 @@ backend/
       auth.py
       user.py
       item.py
+      map.py
+      quest.py
+      achievement.py
+      xp.py
       validation.py
       common.py
     services/
       auth_service.py
       item_service.py
+      map_service.py
+      quest_service.py
+      achievement_service.py
+      xp_service.py
       validation_service.py
       user_service.py
       session_service.py
@@ -175,6 +204,10 @@ backend/
 - `schemas` содержит Pydantic DTO.
 - `core/security.py` отвечает за JWT, hashing и cookie.
 - Сервисный слой не должен импортировать FastAPI `Request`/`Response`, кроме auth-service, если cookie устанавливается на API-границе.
+- [ДОБАВЛЕНО] `api/runtime.py` содержит root-level endpoint `GET /map/api-key` без префикса `/api/v1`, потому что текущий frontend вызывает именно этот path.
+- [ДОБАВЛЕНО] `map_points.py`, `quests.py`, `achievements.py`, `xp.py` нужны для серверной замены данных из `frontend/src/data/mockData.js`; текущий frontend их пока не вызывает, но DTO ниже фиксируют ожидаемую форму.
+
+// ИЗМЕНЕНО: старое ТЗ покрывало только `items`, а фронтенд показывает карту, точки, квесты, XP-историю и достижения. См. `frontend/src/pages/*.jsx` и `frontend/src/data/mockData.js`.
 
 ## 6. База данных
 
@@ -408,6 +441,142 @@ Constraints:
 - refresh-token хранится в БД только как hash.
 - при refresh выполняется ротация: старая сессия помечается revoked, новая создается.
 - повторное использование уже revoked refresh-token считается подозрительным событием.
+
+### [ДОБАВЛЕНО] 6.10 `map_points`
+
+Городские точки, которые фронт отображает на карте и в bottom sheet.
+
+Причина: `frontend/src/data/mockData.js:33-74`, `frontend/src/pages/MapPage.jsx:328-449`, `frontend/src/pages/PointDetailPage.jsx:10`.
+
+| Колонка | Тип | Ограничения | Описание |
+| --- | --- | --- | --- |
+| `id` | varchar(96) | pk | Стабильный slug/id точки, например `roof-beacon`; фронт использует строковый id |
+| `name` | varchar(160) | not null | Название точки |
+| `category` | varchar(64) | not null | Display-категория: `QR-метка`, `AR-сцена`, `Секрет` |
+| `rarity` | enum | not null | `common`, `rare`, `epic`, `legendary`, `mythic` |
+| `latitude` | numeric(9,6) | not null | Широта; фронтовый `coords[0]` |
+| `longitude` | numeric(9,6) | not null | Долгота; фронтовый `coords[1]` |
+| `reward_xp` | int | not null default 0 | Награда XP |
+| `description` | text | not null default empty | Описание точки |
+| `quest_id` | varchar(96) | nullable fk `quests.id` | Связанный квест |
+| `is_big` | bool | not null default false | Увеличенный маркер на карте |
+| `has_hint` | bool | not null default false | Показывать радиус-подсказку |
+| `is_active` | bool | not null default true | Показывать точку во фронте |
+| `created_at` | timestamptz | not null | Создана |
+| `updated_at` | timestamptz | not null | Обновлена |
+
+Индексы:
+
+- `ix_map_points_active` on `is_active`;
+- `ix_map_points_rarity` on `rarity`;
+- `ix_map_points_lat_lon` on `(latitude, longitude)`;
+- если подключен PostGIS: `geography(Point,4326)` + GiST index для nearby-запросов.
+
+### [ДОБАВЛЕНО] 6.11 `quests`
+
+Квесты, которые фронт показывает на главной и странице квестов.
+
+Причина: `frontend/src/data/mockData.js:21-25`, `frontend/src/pages/HomePage.jsx:84-101`, `frontend/src/pages/QuestsPage.jsx:6-36`.
+
+| Колонка | Тип | Ограничения |
+| --- | --- | --- |
+| `id` | varchar(96) | pk |
+| `name` | varchar(160) | not null |
+| `step_label` | varchar(80) | not null |
+| `progress_percent` | int | not null default 0, check 0..100 |
+| `rarity` | enum | not null |
+| `reward_xp` | int | not null default 0 |
+| `season_id` | varchar(96) | nullable |
+| `is_active` | bool | not null default true |
+| `created_at` | timestamptz | not null |
+| `updated_at` | timestamptz | not null |
+
+### [ДОБАВЛЕНО] 6.12 `events`
+
+Активный сезонный/ивентовый блок главного экрана.
+
+Причина: `frontend/src/data/mockData.js:14-18`, `frontend/src/pages/HomePage.jsx:69-78`.
+
+| Колонка | Тип | Ограничения |
+| --- | --- | --- |
+| `id` | varchar(96) | pk |
+| `title` | varchar(180) | not null |
+| `rarity` | enum | not null |
+| `xp_multiplier` | numeric(5,2) | not null default 1 |
+| `starts_at` | timestamptz | not null |
+| `ends_at` | timestamptz | not null |
+| `is_active` | bool | not null default true |
+| `created_at` | timestamptz | not null |
+| `updated_at` | timestamptz | not null |
+
+DTO должен дополнительно отдавать display-поля `xpMultiplier` и `timeLeft`, потому что текущий UI выводит готовые строки.
+
+### [ДОБАВЛЕНО] 6.13 `xp_events`
+
+История XP и недавние награды.
+
+Причина: `frontend/src/data/mockData.js:27-31`, `frontend/src/data/mockData.js:100-116`, `frontend/src/pages/HomePage.jsx:108-128`, `frontend/src/pages/XpHistoryPage.jsx:46-76`.
+
+| Колонка | Тип | Ограничения |
+| --- | --- | --- |
+| `id` | bigint | pk |
+| `user_id` | bigint | fk `users.id`, not null |
+| `source` | varchar(180) | not null |
+| `tag` | varchar(32) | nullable |
+| `xp` | int | not null |
+| `multiplier` | numeric(5,2) | nullable |
+| `color` | enum | nullable, values `cyan`, `violetHi`, `gold`, `pink` |
+| `occurred_at` | timestamptz | not null |
+| `created_at` | timestamptz | not null |
+
+Индексы:
+
+- `ix_xp_events_user_occurred` on `(user_id, occurred_at desc)`.
+
+DTO должен отдавать `time` как display-строку (`"12 мин назад"`, `"14:22"`) или отдельно `occurred_at` и согласованное поле `time`.
+
+### [ДОБАВЛЕНО] 6.14 `achievements` и `user_achievements`
+
+Справочник достижений и прогресс пользователя.
+
+Причина: `frontend/src/data/mockData.js:119-128`, `frontend/src/pages/AchievementsPage.jsx:7-65`.
+
+`achievements`:
+
+| Колонка | Тип | Ограничения |
+| --- | --- | --- |
+| `id` | varchar(96) | pk |
+| `icon` | varchar(32) | not null |
+| `name` | varchar(128) | not null |
+| `rarity` | enum | not null |
+| `description` | text | not null default empty |
+| `reward_xp` | int | not null default 0 |
+| `created_at` | timestamptz | not null |
+| `updated_at` | timestamptz | not null |
+
+`user_achievements`:
+
+| Колонка | Тип | Ограничения |
+| --- | --- | --- |
+| `user_id` | bigint | fk `users.id`, not null |
+| `achievement_id` | varchar(96) | fk `achievements.id`, not null |
+| `unlocked` | bool | not null default false |
+| `progress_percent` | int | not null default 0, check 0..100 |
+| `unlocked_at` | timestamptz | nullable |
+
+Constraint: unique `(user_id, achievement_id)`.
+
+### [ДОБАВЛЕНО] 6.15 Расширение `users` под профиль Skanshi
+
+[БЫЛО: `users` хранит только Telegram-поля, privacy и роль.] -> [СТАЛО: кроме Telegram-полей, backend должен уметь вернуть профильные поля, которые фронт отображает: `display_name`, `public_id`, `rank`, `level`, `level_progress`, `xp`, `next_level_xp`, `streak_days`, `season_label`. Их можно хранить в `users`, отдельной таблице `user_profiles` или вычислять из `xp_events`, но DTO ответа обязан содержать эти поля.]
+
+Причина: `frontend/src/data/mockData.js:1-11`, `frontend/src/pages/HomePage.jsx:20-42`, `frontend/src/pages/ProfilePage.jsx:21-54`.
+
+### [ДОБАВЛЕНО] 6.16 Совместимость старых `items` и новых AR-точек
+
+Старые таблицы `items`, `item_secrets`, `validations` остаются допустимым production-механизмом коллекции, но текущий фронт не вызывает item-каталог и не отправляет secret token на backend. Для текущей версии UI обязательны `map_points`, `quests`, `xp_events`, `achievements` и runtime-config endpoint карты.
+
+// ИЗМЕНЕНО: это устраняет расхождение, где ТЗ подробно описывало предметы, но не описывало основные сущности, уже видимые во frontend UI.
 
 ## 7. DTO и JSON-схемы
 
@@ -746,15 +915,265 @@ Validation:
 }
 ```
 
+### [ДОБАВЛЕНО] 7.8 Runtime config DTO
+
+`MapApiKeyResponse`:
+
+```json
+{
+  "api_key": "yandex-maps-browser-key"
+}
+```
+
+Правила:
+
+- поле называется строго `api_key`, не `apiKey`;
+- значение должно быть непустой строкой;
+- endpoint не должен требовать `Authorization`, потому что текущий frontend не отправляет access-token;
+- при отсутствии ключа вернуть `503` с `ErrorResponse`, а не HTML/plain text.
+
+Причина: `frontend/src/hooks/useYMapLoader.js:28-38` вызывает `response.json()` и проверяет `typeof payload.api_key === 'string'`.
+
+### [ДОБАВЛЕНО] 7.9 DTO экранов текущего frontend
+
+Эти DTO соответствуют структурам из `frontend/src/data/mockData.js`. Текущий frontend пока не запрашивает их по HTTP, но backend-ТЗ должно фиксировать их как целевую форму для замены mock-данных без изменения UI-семантики.
+
+`Rarity`:
+
+```json
+"common | rare | epic | legendary | mythic"
+```
+
+`UiColorToken`:
+
+```json
+"cyan | violetHi | gold | pink"
+```
+
+`CurrentUserDashboard`:
+
+```json
+{
+  "name": "Нэйт",
+  "username": "nate_void",
+  "id": "0xN4TE",
+  "rank": 142,
+  "level": 14,
+  "levelProgress": 68,
+  "xp": 6840,
+  "nextLevelXp": 10000,
+  "streakDays": 6,
+  "season": "СЕЗОН 2 · ПУЛЬС ГОРОДА"
+}
+```
+
+`ActiveEventResponse`:
+
+```json
+{
+  "rarity": "mythic",
+  "title": "Затмение: Ночь Реликвий",
+  "xpMultiplier": "×3 XP",
+  "timeLeft": "2Д 14Ч"
+}
+```
+
+`QuestCardResponse`:
+
+```json
+{
+  "id": "old-town-shadows",
+  "name": "Тени Старого города",
+  "step": "Точка 3 из 5",
+  "progress": 60,
+  "rarity": "epic",
+  "xp": 450
+}
+```
+
+`RewardFeedItemResponse`:
+
+```json
+{
+  "source": "Скан · ТЦ «Орбита»",
+  "xp": 120,
+  "multiplier": "×2",
+  "time": "12 мин назад",
+  "color": "cyan"
+}
+```
+
+`MapPinResponse`:
+
+```json
+{
+  "id": "roof-beacon",
+  "name": "Маяк на крыше",
+  "coords": [55.75162, 37.61866],
+  "rarity": "epic",
+  "big": true,
+  "hint": false
+}
+```
+
+`NearbyPointResponse`:
+
+```json
+{
+  "id": "roof-beacon",
+  "name": "Маяк на крыше",
+  "coords": [55.75162, 37.61866],
+  "category": "AR-сцена",
+  "rarity": "epic",
+  "distance": "120 м",
+  "done": false
+}
+```
+
+`PointDetailResponse`:
+
+```json
+{
+  "id": "roof-beacon",
+  "name": "Маяк на крыше",
+  "category": "AR-СЦЕНА",
+  "distance": "120 М",
+  "rarity": "epic",
+  "reward": 180,
+  "status": "Не пройдено",
+  "quest": "Тени Старого города",
+  "description": "Описание точки"
+}
+```
+
+`ProfileStatResponse`:
+
+```json
+{
+  "value": "218",
+  "label": "СКАНОВ",
+  "color": "cyan"
+}
+```
+
+`XpHistoryGroupResponse`:
+
+```json
+{
+  "day": "СЕГОДНЯ",
+  "items": [
+    {
+      "source": "Скан · Маяк на крыше",
+      "tag": "AR",
+      "xp": 180,
+      "multiplier": "×3",
+      "color": "cyan",
+      "time": "14:22"
+    }
+  ]
+}
+```
+
+`AchievementResponse`:
+
+```json
+{
+  "icon": "qr",
+  "name": "Первый скан",
+  "rarity": "common",
+  "unlocked": true,
+  "progress": 100
+}
+```
+
+`FrontendAppStateResponse`:
+
+```json
+{
+  "user": {},
+  "activeEvent": {},
+  "quests": [],
+  "recentRewards": [],
+  "mapPins": [],
+  "nearbyPoints": [],
+  "pointDetails": {},
+  "stats": [],
+  "xpHistoryGroups": [],
+  "achievements": []
+}
+```
+
+Правила совместимости:
+
+- Для DTO, которые заменяют `mockData.js`, использовать camelCase там, где фронт уже читает camelCase: `levelProgress`, `nextLevelXp`, `streakDays`, `activeEvent`, `recentRewards`, `mapPins`, `nearbyPoints`, `pointDetails`, `xpHistoryGroups`.
+- `coords` отдавать как `[latitude, longitude]`; frontend сам преобразует в `[longitude, latitude]` для Yandex Maps. См. `frontend/src/pages/MapPage.jsx:45-52`.
+- `distance`, `time`, `timeLeft`, `step`, `status`, `season`, `value` являются display-строками. Если backend также отдает числовые поля, они не заменяют эти строки без изменения фронта.
+- `pointDetails` должен быть объектом, где ключ — id точки, а значение — `PointDetailResponse`, потому что frontend обращается как `pointDetails[selectedPointId]`.
+
+// ИЗМЕНЕНО: старые DTO `ItemFullResponse`/`ValidationResponse` не покрывают данные, которые реально отображают страницы `HomePage`, `MapPage`, `QuestsPage`, `ProfilePage`, `XpHistoryPage`, `AchievementsPage`.
+
 ## 8. HTTP API
 
 Базовый префикс: `/api/v1`.
+
+[ДОБАВЛЕНО] Исключение из базового префикса: `GET /map/api-key` должен быть доступен по root-level path `/map/api-key`, потому что текущий frontend вызывает именно `fetch('/map/api-key', { credentials: 'include' })`. Реализация только на `/api/v1/map/api-key` не удовлетворяет текущему фронту без изменения frontend-кода.
 
 Все protected endpoints требуют:
 
 ```http
 Authorization: Bearer <access_token>
 ```
+
+[ДОБАВЛЕНО] В текущем frontend-коде нет отправки `Authorization` header, access-token, refresh-token refresh-flow или websocket-событий. Поэтому protected endpoints ниже являются production roadmap/будущим backend API, но не обязательным контрактом для уже имеющегося frontend bundle. Причина: поиск по `Authorization`, `Bearer`, `/auth`, `WebSocket`, `EventSource` в `frontend/src` не находит вызовов.
+
+### [ДОБАВЛЕНО] 8.0 Runtime config
+
+#### `GET /map/api-key`
+
+Статус: обязателен для текущего frontend fallback.
+
+Auth:
+
+- `Authorization` не требуется;
+- cookie не требуется, но frontend отправляет `credentials: 'include'`, поэтому CORS/Set-Cookie политика не должна ломать запрос;
+- endpoint должен работать до логина.
+
+Request:
+
+- body отсутствует;
+- query параметры отсутствуют;
+- headers специальные не требуются.
+
+Логика:
+
+1. Прочитать `YANDEX_MAPS_API_KEY` из env/secret manager.
+2. Если ключ отсутствует или пустой, вернуть `503 map_api_key_not_configured`.
+3. Вернуть JSON строго с полем `api_key`.
+
+Ответ `200`:
+
+```json
+{
+  "api_key": "yandex-maps-browser-key"
+}
+```
+
+Ошибки:
+
+- `503 map_api_key_not_configured`: ключ не настроен;
+- `500 internal_error`: неожиданная ошибка чтения конфигурации.
+
+Пояснение: frontend при любом `!response.ok`, невалидном JSON или отсутствии непустого `api_key` показывает fallback-состояние карты. См. `frontend/src/hooks/useYMapLoader.js:28-38`, текст fallback в `frontend/src/pages/MapPage.jsx:210`.
+
+### [ДОБАВЛЕНО] 8.0.1 Статус endpoints относительно текущего фронта
+
+| Endpoint/группа | Статус после сверки | Причина |
+| --- | --- | --- |
+| `GET /map/api-key` | обязательный, отсутствовал в ТЗ | Единственный фактический backend fetch во фронте: `frontend/src/hooks/useYMapLoader.js:28` |
+| `POST /auth/init`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` | [ДОБАВЛЕНО] не вызываются текущим frontend bundle; оставить как production roadmap | Login button просто ведет на `/home`, `useTelegram()` не отправляет `initData` на backend: `frontend/src/pages/LoginPage.jsx:45-58`, `frontend/src/hooks/useTelegram.js:55-75` |
+| `/items`, `/items/my`, `/items/{id}`, `/items/{id}/rating`, `POST /items/secret` | [ДОБАВЛЕНО] не вызываются текущим frontend bundle; старый item-каталог не соответствует видимым экранам Skanshi | Scanner/result меняют локальный state: `frontend/src/pages/ScanPage.jsx:82`, `frontend/src/pages/ScanResultPage.jsx:8-12`; данные берутся из `mockData.js` |
+| `/profile/validations/count`, `/users/settings/privacy` | [ДОБАВЛЕНО] не вызываются текущим frontend bundle; текущий профиль ожидает расширенный dashboard DTO | `frontend/src/pages/ProfilePage.jsx:15-80` читает `user`, `stats`, `profileLinks` из AppState |
+| WebSocket/SSE | [ДОБАВЛЕНО] не используется | В `frontend/src` нет `WebSocket`/`EventSource`/socket.io |
 
 ### 8.1 Health
 
@@ -1195,7 +1614,149 @@ Request:
 }
 ```
 
-### 8.6 Admin API
+### [ДОБАВЛЕНО] 8.6 Frontend data API для замены `mockData.js`
+
+Статус: целевой контракт для серверной интеграции текущих экранов; текущий frontend bundle эти endpoints пока не вызывает.
+
+Причина: все страницы получают данные через `useAppState()` из `frontend/src/context/AppStateContext.jsx`, а начальные значения импортируются из `frontend/src/data/mockData.js`.
+
+#### `GET /app/state`
+
+Protected после подключения реального auth. Для текущего mock-режима не вызывается.
+
+Назначение: одним запросом вернуть данные первого экрана и навигационных разделов без N+1 на клиенте.
+
+Ответ `200`: `FrontendAppStateResponse`.
+
+Минимальный состав:
+
+```json
+{
+  "user": {},
+  "activeEvent": {},
+  "quests": [],
+  "recentRewards": [],
+  "mapPins": [],
+  "nearbyPoints": [],
+  "pointDetails": {},
+  "stats": [],
+  "xpHistoryGroups": [],
+  "achievements": []
+}
+```
+
+#### `GET /map/points`
+
+Protected после подключения реального auth. Для текущего mock-режима не вызывается.
+
+Query:
+
+| Параметр | Тип | Default | Описание |
+| --- | --- | --- | --- |
+| `lat` | number/null | null | Широта пользователя, если доступна |
+| `lon` | number/null | null | Долгота пользователя, если доступна |
+| `radius_meters` | int | 1000 | Радиус nearby |
+| `rarity` | enum/null | null | Фильтр редкости |
+| `category` | str/null | null | Фильтр категории |
+| `done` | bool/null | null | Фильтр прохождения |
+
+Ответ `200`:
+
+```json
+{
+  "mapPins": [],
+  "nearbyPoints": [],
+  "pointDetails": {}
+}
+```
+
+Правила:
+
+- `coords` отдавать как `[latitude, longitude]`;
+- `nearbyPoints` сортировать по расстоянию, потому что UI показывает `ПО РАССТОЯНИЮ`;
+- фильтры должны поддерживать текущие UI-чипы: все, не пройдено, редкие, секреты. Сейчас чипы не отправляют query, но backend-контракт должен быть готов.
+
+#### `GET /quests`
+
+Protected после подключения реального auth. Ответ `200`:
+
+```json
+{
+  "items": []
+}
+```
+
+Элемент массива: `QuestCardResponse`.
+
+#### `GET /xp/history`
+
+Protected после подключения реального auth.
+
+Query:
+
+| Параметр | Тип | Default |
+| --- | --- | --- |
+| `limit` | int | 50 |
+| `offset` | int | 0 |
+| `tag` | str/null | null |
+
+Ответ `200`:
+
+```json
+{
+  "groups": []
+}
+```
+
+Элемент `groups`: `XpHistoryGroupResponse`.
+
+#### `GET /achievements`
+
+Protected после подключения реального auth. Ответ `200`:
+
+```json
+{
+  "items": [],
+  "summary": {
+    "unlocked": 23,
+    "total": 60
+  }
+}
+```
+
+Элемент `items`: `AchievementResponse`.
+
+#### `POST /scan/claim`
+
+Protected после подключения реального auth. Для текущего frontend не вызывается: кнопка `Забрать награду` вызывает локальный `claimReward()`.
+
+Request:
+
+```json
+{
+  "scan_id": "string"
+}
+```
+
+Ответ `200`:
+
+```json
+{
+  "status": "claimed",
+  "xp": 250,
+  "user": {}
+}
+```
+
+Ошибки:
+
+- `404 scan_not_found`;
+- `409 reward_already_claimed`;
+- `422 validation_error`.
+
+// ИЗМЕНЕНО: эти endpoints закрывают UI-данные, отсутствующие в старом ТЗ: карта, квесты, XP-история, достижения, агрегированный профиль.
+
+### [БЫЛО: 8.6 Admin API] -> [СТАЛО: 8.7 Admin API]
 
 Если каталог не редактируется вручную через seed/migrations, production backend должен иметь закрытый admin API.
 
@@ -1255,7 +1816,25 @@ Request:
 
 Если settings невалидны, приложение должно падать на старте.
 
-### 9.2 Telegram login
+### [ДОБАВЛЕНО] 9.1.1 Загрузка карты текущим frontend
+
+Текущий happy path:
+
+1. Frontend пытается получить ключ карты из `window.RUNTIME_CONFIG` или Vite env.
+2. Если ключ не найден, frontend вызывает `GET /map/api-key` с `credentials: include`.
+3. Backend возвращает `{"api_key":"..."}`.
+4. Frontend подключает `https://api-maps.yandex.ru/v3/?apikey=<api_key>&lang=ru_RU`.
+5. Frontend отображает `mapPins`, `nearbyPoints`, `pointDetails` из локального состояния.
+
+Ошибочный сценарий:
+
+- если backend возвращает не-2xx, не JSON или JSON без непустого `api_key`, frontend показывает fallback `"Карта ждёт подключение"`.
+
+Причина: `frontend/src/hooks/useYMapLoader.js:11-38`, `frontend/src/pages/MapPage.jsx:210`.
+
+### [БЫЛО: 9.2 Telegram login] -> [СТАЛО: 9.2 Telegram login, future production flow]
+
+[ДОБАВЛЕНО] Статус: текущий frontend не отправляет `initData`/`tg_web_app_data` на backend. Этот сценарий остается требованием для production auth, но не является текущим фронтовым контрактом.
 
 Основной happy path:
 
@@ -1293,7 +1872,9 @@ Request:
 - пометить все активные сессии пользователя как revoked или поднять security event;
 - вернуть `403 refresh_reuse_detected`.
 
-### 9.5 Получение предмета по QR/startapp secret
+### [БЫЛО: 9.5 Получение предмета по QR/startapp secret] -> [СТАЛО: 9.5 Получение предмета по QR/startapp secret, future production flow]
+
+[ДОБАВЛЕНО] Статус: текущий frontend не декодирует QR, не отправляет token на `/items/secret` и не вызывает backend при нажатии `Забрать награду`. Экран сканирования ведет на `/result`, а награда применяется локальным reducer. См. `frontend/src/pages/ScanPage.jsx:82`, `frontend/src/pages/ScanResultPage.jsx:8-12`, `frontend/src/context/AppStateContext.jsx:41-45`.
 
 1. Пользователь открывает QR/startapp.
 2. Клиент отправляет token на `/items/secret`.
@@ -1375,6 +1956,7 @@ HTTP mapping:
 - Не использовать `allow_origins=["*"]` вместе с credentials.
 - Не логировать Authorization header, cookies, initData, raw secret, JWT payload целиком.
 - Включить rate limit:
+  - [ДОБАВЛЕНО] `/map/api-key`: например 60/min per IP, endpoint публичный и не требует auth;
   - `/auth/init`: например 10/min per IP;
   - `/auth/refresh`: 30/min per IP/session;
   - `/items/secret`: 20/min per user.
@@ -1382,6 +1964,7 @@ HTTP mapping:
 - Все входные строки иметь max length.
 - Для admin endpoints проверять `role`.
 - SQLAlchemy queries строить параметризованно, без string interpolation.
+- [ДОБАВЛЕНО] `YANDEX_MAPS_API_KEY`, возвращаемый в browser, должен быть ограничен по доменам в настройках Яндекс.Карт. Backend не должен логировать значение ключа.
 
 CSRF:
 
@@ -1403,6 +1986,8 @@ CSRF:
 Целевые показатели для MVP:
 
 - `/health/live`: p95 < 20 ms;
+- [ДОБАВЛЕНО] `/map/api-key`: p95 < 50 ms, без обращения к внешним сервисам;
+- [ДОБАВЛЕНО] `/map/points` на 1000 active points: p95 < 250 ms при warm DB/PostGIS index, если endpoint реализуется;
 - `/items/my` на 1000 items: p95 < 300 ms при warm DB;
 - `/items/secret`: p95 < 250 ms без внешних сетевых вызовов;
 - `/items/{id}/rating` с pagination 100 rows: p95 < 200 ms.
@@ -1450,6 +2035,12 @@ CSRF:
 - `item_secrets`;
 - `validations`;
 - `refresh_sessions`;
+- [ДОБАВЛЕНО] `map_points`;
+- [ДОБАВЛЕНО] `quests`;
+- [ДОБАВЛЕНО] `events`;
+- [ДОБАВЛЕНО] `xp_events`;
+- [ДОБАВЛЕНО] `achievements`;
+- [ДОБАВЛЕНО] `user_achievements`;
 - все constraints и индексы.
 
 ## 15. Логирование и наблюдаемость
@@ -1474,6 +2065,7 @@ Middleware:
 - auth failures by reason;
 - secret validation success/failure;
 - refresh token reuse events.
+- [ДОБАВЛЕНО] map api-key config failures by reason, без логирования самого ключа.
 
 ## 16. Docker и production запуск
 
@@ -1501,6 +2093,21 @@ Production Compose/Kubernetes:
 ## 17. Тестирование
 
 Минимальный набор тестов:
+
+Runtime config:
+
+- [ДОБАВЛЕНО] `GET /map/api-key` возвращает `200` и JSON `{"api_key": "..."}` при настроенном `YANDEX_MAPS_API_KEY`;
+- [ДОБАВЛЕНО] `GET /map/api-key` не требует `Authorization`;
+- [ДОБАВЛЕНО] `GET /map/api-key` возвращает `503 map_api_key_not_configured`, если ключ пустой;
+- [ДОБАВЛЕНО] ответ не содержит `apiKey` вместо `api_key`;
+- [ДОБАВЛЕНО] значение ключа не попадает в логи.
+
+Frontend DTO:
+
+- [ДОБАВЛЕНО] `MapPinResponse.coords` сериализуется как `[latitude, longitude]`;
+- [ДОБАВЛЕНО] `pointDetails` сериализуется как объект по id точки, а не массив;
+- [ДОБАВЛЕНО] DTO экранов сохраняют camelCase-поля, которые читает фронт: `levelProgress`, `nextLevelXp`, `streakDays`, `xpHistoryGroups`;
+- [ДОБАВЛЕНО] `rarity` ограничен значениями `common`, `rare`, `epic`, `legendary`, `mythic`.
 
 Auth:
 
@@ -1558,6 +2165,10 @@ CI pipeline:
 
 Backend считается готовым, если:
 
+- [ДОБАВЛЕНО] для текущего frontend fallback реализован `GET /map/api-key` без префикса `/api/v1`;
+- [ДОБАВЛЕНО] `GET /map/api-key` возвращает строго `api_key` и не требует `Authorization`;
+- [ДОБАВЛЕНО] OpenAPI/документация явно помечает auth/items/profile endpoints как не вызываемые текущим frontend bundle, если они остаются в roadmap;
+- [ДОБАВЛЕНО] DTO для будущей замены `mockData.js` соответствуют разделу 7.9;
 - все endpoints из раздела 8 реализованы или явно помечены как out of scope;
 - OpenAPI соответствует DTO из раздела 7;
 - нет секретов в git;
@@ -1575,21 +2186,26 @@ Backend считается готовым, если:
 ## 19. Рекомендуемый порядок реализации с нуля
 
 1. Создать FastAPI app, settings, health endpoints.
-2. Подключить PostgreSQL async engine и Alembic.
-3. Описать модели и первую миграцию со всеми индексами.
-4. Реализовать repositories без магического DI.
-5. Реализовать DTO.
-6. Реализовать security: JWT access/refresh, hashing, cookies.
-7. Реализовать `/auth/init`, `/auth/refresh`, `/auth/logout`, `/auth/me`.
-8. Реализовать protected dependency `CurrentUser`.
-9. Реализовать каталог `/items`, `/items/my`, `/items/{id}`, rating.
-10. Реализовать `/items/secret` с транзакцией и блокировкой item.
-11. Подключить Redis cache для count и rate limit.
-12. Реализовать settings/profile endpoints.
-13. Добавить admin API или seed-скрипты.
-14. Написать тесты на auth, validations, гонки, Redis fallback.
-15. Настроить Docker, CI, `pip-audit`.
-16. Прогнать миграции на чистой БД и тестовой БД.
+2. [ДОБАВЛЕНО] Реализовать root-level `GET /map/api-key` и покрыть его тестами, потому что это единственный endpoint, который уже вызывает текущий frontend.
+3. Подключить PostgreSQL async engine и Alembic.
+4. Описать модели и первую миграцию со всеми индексами.
+5. [ДОБАВЛЕНО] Описать модели `map_points`, `quests`, `events`, `xp_events`, `achievements`, `user_achievements`.
+6. Реализовать repositories без магического DI.
+7. Реализовать DTO.
+8. [ДОБАВЛЕНО] Реализовать DTO раздела 7.9 для будущей замены `mockData.js`.
+9. Реализовать security: JWT access/refresh, hashing, cookies.
+10. Реализовать `/auth/init`, `/auth/refresh`, `/auth/logout`, `/auth/me`.
+11. Реализовать protected dependency `CurrentUser`.
+12. Реализовать каталог `/items`, `/items/my`, `/items/{id}`, rating.
+13. Реализовать `/items/secret` с транзакцией и блокировкой item.
+14. [ДОБАВЛЕНО] Реализовать `/app/state`, `/map/points`, `/quests`, `/xp/history`, `/achievements`, `/scan/claim`, если принято решение переводить текущие mock-экраны на backend.
+15. Подключить Redis cache для count и rate limit.
+16. Реализовать settings/profile endpoints.
+17. Добавить admin API или seed-скрипты.
+18. Написать тесты на auth, validations, гонки, Redis fallback.
+19. [ДОБАВЛЕНО] Написать тесты на runtime map config и frontend DTO.
+20. Настроить Docker, CI, `pip-audit`.
+21. Прогнать миграции на чистой БД и тестовой БД.
 
 ## 20. Roadmap по этапам и оценка времени
 
@@ -1641,6 +2257,7 @@ Backend считается готовым, если:
 - есть request id middleware;
 - есть единый формат ошибок;
 - есть CORS из env;
+- [ДОБАВЛЕНО] есть root-level `GET /map/api-key` для текущего frontend;
 - есть подключение к PostgreSQL и Redis;
 - есть `/health/live` и `/health/ready`.
 
@@ -1653,11 +2270,13 @@ Backend считается готовым, если:
 | DB engine/session dependency | 2-3 |
 | Redis client с fail-open helper | 1-2 |
 | Error handlers и `ErrorResponse` | 2-3 |
+| [ДОБАВЛЕНО] Runtime endpoint `GET /map/api-key` + tests | 1-2 |
 | Request id и базовое logging middleware | 2-3 |
 
 Готово, когда:
 
 - приложение падает на старте при невалидных env;
+- [ДОБАВЛЕНО] `/map/api-key` возвращает `api_key` при настроенном ключе и `503` при пустом ключе;
 - `/health/ready` проверяет БД и Redis;
 - все ошибки имеют единый JSON-формат.
 
@@ -1671,6 +2290,7 @@ Backend считается готовым, если:
 - создана первая Alembic migration;
 - все constraints и индексы названы явно;
 - миграция применяется на пустую БД.
+- [ДОБАВЛЕНО] схема покрывает не только legacy items, но и сущности текущего UI: map points, quests, events, XP events, achievements.
 
 Работы:
 
@@ -1680,6 +2300,7 @@ Backend считается готовым, если:
 | Описать `users`, `refresh_sessions` | 2-4 |
 | Описать catalog tables: categories, types, prototypes, items, images | 3-5 |
 | Описать `item_secrets`, `validations` | 2-4 |
+| [ДОБАВЛЕНО] Описать `map_points`, `quests`, `events`, `xp_events`, `achievements`, `user_achievements` | 4-7 |
 | Создать индексы и constraints | 2-3 |
 | Прогнать upgrade/downgrade на чистой БД | 2-3 |
 | Исправить типовые ошибки миграций | 1-3 |
@@ -1699,6 +2320,7 @@ Backend считается готовым, если:
 - есть Pydantic-схемы из раздела 7;
 - есть repositories без магического runtime DI;
 - есть сервисы для users, sessions, items, validations;
+- [ДОБАВЛЕНО] есть DTO/repositories для `map_points`, `quests`, `events`, `xp_events`, `achievements`, если endpoints раздела 8.6 входят в scope;
 - запросы не делают N+1.
 
 Работы:
@@ -1706,10 +2328,12 @@ Backend считается готовым, если:
 | Задача | Часы |
 | --- | ---: |
 | Описать DTO для auth/user/catalog/validation/common | 3-5 |
+| [ДОБАВЛЕНО] Описать DTO экранов из раздела 7.9 | 2-4 |
 | Реализовать repository base pattern | 2-3 |
 | Реализовать user/session repositories | 2-3 |
 | Реализовать item/catalog repositories с eager loading | 2-4 |
 | Реализовать validation repository | 2-3 |
+| [ДОБАВЛЕНО] Реализовать repositories для карты, квестов, XP и достижений | 4-7 |
 | Написать простые unit tests на DTO/serializing | 1-2 |
 
 Готово, когда:
@@ -2003,6 +2627,7 @@ Backend считается готовым, если:
 
 Нельзя откладывать:
 
+- [ДОБАВЛЕНО] `GET /map/api-key`, если frontend не получает Yandex Maps key через `VITE_YMAP_API_KEY`, `VITE_YANDEX_MAPS_API_KEY` или `window.RUNTIME_CONFIG`;
 - отсутствие секретов в git;
 - refresh-token только в HttpOnly cookie;
 - серверные refresh-сессии и rotation;
@@ -2013,6 +2638,10 @@ Backend считается готовым, если:
 
 ## 21. Отличия от текущего backend, которые обязательно исправить
 
+- [ДОБАВЛЕНО] Добавить root-level endpoint `GET /map/api-key` без `/api/v1`, ответ `{"api_key":"..."}`.
+- [ДОБАВЛЕНО] Добавить env `YANDEX_MAPS_API_KEY` и не логировать его значение.
+- [ДОБАВЛЕНО] Документировать, что текущий frontend не вызывает `/auth/*`, `/items/*`, `/profile/*`, `/users/settings/*`, websocket/SSE.
+- [ДОБАВЛЕНО] Добавить модели/DTO для текущих UI-доменов Skanshi: map points, quests, active event, XP history, achievements, dashboard profile.
 - Убрать hardcoded `BOT_TOKEN`, `SECRET_KEY`, `DATABASE_URL`.
 - Перенести URL Alembic в env.
 - Не возвращать refresh-token в JSON.
@@ -2030,3 +2659,25 @@ Backend считается готовым, если:
 - Сделать DTO-ответы объектами, а не голыми `int`/`bool`, где это публичный API.
 - Убрать магический runtime DI через `__getattr__` или заменить на явные зависимости.
 - Добавить тесты.
+
+## [ДОБАВЛЕНО] 22. Сводная таблица изменений после сверки с frontend
+
+| Раздел / endpoint | Изменение | Почему нужно | Ссылка на frontend |
+| --- | --- | --- | --- |
+| Название и цель | `[БЫЛО: Compactics] -> [СТАЛО: Skanshi]`; цель расширена с коллекции предметов до AR-квестов, карты, XP, достижений и профиля | Фронтенд называется Skanshi и содержит соответствующие экраны | `frontend/README.md`, `frontend/index.html`, `frontend/src/App.jsx` |
+| Общий статус API | Добавлен вывод аудита: текущий frontend реально вызывает только `GET /map/api-key`; остальные данные mock | Чтобы backend-разработчик не реализовывал старый API как якобы уже используемый фронтом | `frontend/src/context/AppStateContext.jsx`, `frontend/src/data/mockData.js` |
+| Env | Добавлен `YANDEX_MAPS_API_KEY` | Backend должен уметь вернуть ключ карты, если он не внедрен во фронт через Vite/runtime config | `frontend/src/hooks/useYMapLoader.js:11-28` |
+| Архитектура | Добавлены `api/runtime.py`, `map_points.py`, `quests.py`, `achievements.py`, `xp.py` и соответствующие schemas/services | Старый backend-layout не покрывал карту, квесты, XP и достижения | `frontend/src/pages/MapPage.jsx`, `frontend/src/pages/QuestsPage.jsx`, `frontend/src/pages/XpHistoryPage.jsx`, `frontend/src/pages/AchievementsPage.jsx` |
+| DB | Добавлены `map_points`, `quests`, `events`, `xp_events`, `achievements`, `user_achievements`; расширен профиль пользователя | UI уже отображает точки, квесты, ивент, историю XP, достижения и профильные показатели | `frontend/src/data/mockData.js:1-128` |
+| DTO | Добавлен `MapApiKeyResponse` со строгим `api_key` | Фронт проверяет именно `payload.api_key`; `apiKey` сломает карту | `frontend/src/hooks/useYMapLoader.js:34` |
+| DTO | Добавлен набор DTO раздела 7.9 с camelCase-полями и display-строками | JSX читает `levelProgress`, `nextLevelXp`, `timeLeft`, `pointDetails[id]`, `coords` как `[lat, lon]` | `frontend/src/pages/HomePage.jsx`, `frontend/src/pages/MapPage.jsx`, `frontend/src/pages/ProfilePage.jsx` |
+| `GET /map/api-key` | Добавлен root-level endpoint без `/api/v1`; public/no auth; response `{"api_key":"..."}`; error `503 map_api_key_not_configured` | Это единственный фактический backend fetch текущего frontend | `frontend/src/hooks/useYMapLoader.js:28-38` |
+| `/auth/*` | Помечены как production roadmap, не текущий frontend contract | Login button не вызывает backend; `useTelegram()` не отправляет `initData` | `frontend/src/pages/LoginPage.jsx:45-58`, `frontend/src/hooks/useTelegram.js:55-75` |
+| `/items/*`, `POST /items/secret` | Помечены как legacy/production roadmap, не текущий frontend contract | Сканирование и claim награды сейчас локальные, без request к backend | `frontend/src/pages/ScanPage.jsx:82`, `frontend/src/pages/ScanResultPage.jsx:8-12` |
+| `/profile/validations/count`, `/users/settings/privacy` | Помечены как не вызываемые текущим frontend; добавлен будущий dashboard DTO | Профиль читает `user`, `stats`, `profileLinks` из AppState, не count/privacy endpoint | `frontend/src/pages/ProfilePage.jsx:15-80` |
+| `GET /app/state` и frontend data API | Добавлены как целевой контракт для снятия `mockData.js`, но явно помечены как не вызываемые текущей сборкой | Позволяет backend-реализации соответствовать уже существующим формам UI без немедленного изменения фронта | `frontend/src/context/AppStateContext.jsx`, `frontend/src/data/mockData.js` |
+| WebSocket/SSE | Явно указано, что не используется | В ТЗ не нужно добавлять websocket-события как обязательные | Поиск по `WebSocket`, `EventSource`, `socket.io` в `frontend/src` |
+| Security | Добавлен rate limit для `/map/api-key`; ключ карты ограничивать по доменам и не логировать | Endpoint публичный, а ключ уходит в browser | `frontend/src/hooks/useYMapLoader.js:70` |
+| Performance | Добавлены p95 для `/map/api-key` и `/map/points` | Новый обязательный endpoint должен иметь измеримые критерии | `frontend/src/pages/MapPage.jsx` |
+| Tests | Добавлены тесты на `/map/api-key`, `api_key`, отсутствие auth, DTO координат и camelCase | Ловит основные несовместимости backend/frontend до ручной проверки | `frontend/src/hooks/useYMapLoader.js`, `frontend/src/data/mockData.js` |
+| Acceptance | Добавлены критерии приемки для `/map/api-key` и DTO mockData replacement | Готовность backend теперь проверяется против текущих потребностей фронта | Разделы 7.8, 7.9, 8.0 |
