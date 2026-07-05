@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.v1 import auth as auth_api
 from app.api.v1 import health as health_api
 from app.api.v1 import item as item_api
+from app.api.v1 import profile as profile_api
 from app.api.v1.dependencies import get_current_user
 from app.config import settings
 from app.db.models.user import UserRole
@@ -19,6 +20,7 @@ from app.schemas.item import (
     PrototypeResponse,
 )
 from app.schemas.item_type import ItemTypeResponse
+from app.schemas.profile import ValidationCountResponse
 from app.schemas.user import UserMe
 from app.schemas.validation import (
     ItemRatingResponse,
@@ -27,6 +29,7 @@ from app.schemas.validation import (
     ValidationShortResponse,
 )
 from app.services.business.items import ItemsBusinessService
+from app.services.business.profile import ProfileBusinessService
 from app.services.errors import (
     ExpiredInitDataError,
     ExpiredRefreshTokenError,
@@ -733,6 +736,39 @@ class TestItemRoutes:
         assert response.json() == expected_response.model_dump(mode="json")
 
 
+class TestProfileRoutes:
+    def test_validation_count_returns_count(
+        self,
+        client: TestClient,
+    ) -> None:
+        expected_response = ValidationCountResponse(count=12)
+
+        async def fake_get_validation_count(self):
+            return expected_response
+
+        with patch.object(
+            ProfileBusinessService,
+            "get_validation_count",
+            fake_get_validation_count,
+        ):
+            response = client.get(
+                "/profile/validations/count",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+
+    def test_validation_count_requires_authorization_header(
+        self,
+        client: TestClient,
+    ) -> None:
+        response = client.get("/profile/validations/count")
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "missing_authorization"
+
+
 class TestItemRouteContracts:
     def test_items_router_is_registered(self) -> None:
         response = TestClient(app, raise_server_exceptions=False).get("/items")
@@ -754,3 +790,20 @@ class TestItemRouteContracts:
             parameters = inspect.signature(handler).parameters
             assert "session" not in parameters
             assert "service" not in parameters
+
+
+class TestProfileRouteContracts:
+    def test_profile_router_is_registered(self) -> None:
+        response = TestClient(app, raise_server_exceptions=False).get(
+            "/profile/validations/count"
+        )
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "missing_authorization"
+
+    def test_profile_handler_does_not_expose_session_dependency(self) -> None:
+        import inspect
+
+        parameters = inspect.signature(profile_api.get_validation_count).parameters
+        assert "session" not in parameters
+        assert "service" not in parameters

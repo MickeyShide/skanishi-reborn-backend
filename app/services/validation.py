@@ -48,6 +48,9 @@ class ValidationService(BaseService):
     async def count_item_rating(self, *, item_id: int) -> int:
         return await self.validation_repository.count_item_rating(item_id=item_id)
 
+    async def count_user_validations(self, *, user_id: int) -> int:
+        return await self.validation_repository.count_user_validations(user_id=user_id)
+
     async def create_validation(
         self,
         *,
@@ -62,4 +65,3 @@ class ValidationService(BaseService):
             item_secret_id=item_secret_id,
             rank=rank,
         )
-

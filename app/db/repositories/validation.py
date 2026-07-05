@@ -76,3 +76,11 @@ class ValidationRepository(BaseRepository[Validation]):
 
         return int(result.scalar_one())
 
+    async def count_user_validations(self, *, user_id: int) -> int:
+        query = select(func.count()).select_from(Validation).where(
+            Validation.user_id == user_id
+        )
+
+        result = await self.session.execute(query)
+
+        return int(result.scalar_one())
