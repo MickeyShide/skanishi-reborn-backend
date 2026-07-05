@@ -2,7 +2,6 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 type Id = Annotated[
     int,
     Field(
@@ -53,7 +52,14 @@ class PaginatedQueryParams(BaseModel):
     offset: Offset = 0
 
 
-class CatalogQueryParams(BaseModel):
+class ItemRatingQueryParams(BaseModel):
+    """Параметры запроса рейтинга предмета."""
+
+    limit: Limit = 100
+    offset: Offset = 0
+
+
+class ItemsCatalogQueryParams(BaseModel):
     """Параметры запроса каталога."""
 
     limit: CatalogLimit = 100

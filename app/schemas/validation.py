@@ -3,10 +3,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
-from app.schemas.catalog import ItemFullResponse
-from app.schemas.common import Id
+from app.schemas.common import Id, PaginatedResponse
+from app.schemas.item import ItemFullResponse
 from app.schemas.user import UserPublic
-
 
 type SecretToken = Annotated[
     str,
@@ -75,3 +74,7 @@ class RatingEntryResponse(BaseModel):
         default=None,
         description="Публичный пользователь или null, если профиль приватный",
     )
+
+
+class ItemRatingResponse(PaginatedResponse[RatingEntryResponse]):
+    """Пагинированный рейтинг по предмету."""

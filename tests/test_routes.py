@@ -3,24 +3,42 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.v1.dependencies import get_current_user
 from app.api.v1 import auth as auth_api
 from app.api.v1 import health as health_api
+from app.api.v1 import item as item_api
+from app.api.v1.dependencies import get_current_user
 from app.config import settings
 from app.db.models.user import UserRole
 from app.main import app
 from app.schemas.auth import TelegramAuthRequest, TokenResponse
+from app.schemas.item import (
+    CategoryResponse,
+    ItemFullResponse,
+    ItemsResponse,
+    MyItemsResponse,
+    PrototypeResponse,
+)
+from app.schemas.item_type import ItemTypeResponse
 from app.schemas.user import UserMe
+from app.schemas.validation import (
+    ItemRatingResponse,
+    RatingEntryResponse,
+    ValidationResponse,
+    ValidationShortResponse,
+)
+from app.services.business.items import ItemsBusinessService
 from app.services.errors import (
     ExpiredInitDataError,
     ExpiredRefreshTokenError,
     InvalidInitDataError,
     InvalidRefreshTokenError,
     InvalidTelegramSignatureError,
+    ItemNotCollectedError,
     RefreshReuseDetectedError,
     RevokedRefreshTokenError,
     UserNotFoundError,
 )
+from app.services.token import TokenService
 
 
 @pytest.fixture
@@ -47,6 +65,56 @@ def build_token_response(access_token: str = "access-token") -> TokenResponse:
         access_token=access_token,
         expires_in=3600,
         user=build_user_me(),
+    )
+
+
+def build_access_token(role: UserRole = UserRole.USER) -> str:
+    user = build_user_me()
+    user.role = role
+    return TokenService().create_access_token(user)
+
+
+def build_item_type_response() -> ItemTypeResponse:
+    return ItemTypeResponse(
+        id=10,
+        title="Artifact",
+        description="Rare type",
+        photo_url="https://example.com/type.png",
+    )
+
+
+def build_category_response() -> CategoryResponse:
+    return CategoryResponse(
+        id=11,
+        title="Museum",
+        color="#112233",
+        description="Museum items",
+    )
+
+
+def build_prototype_response() -> PrototypeResponse:
+    return PrototypeResponse(
+        id=12,
+        title="Prototype",
+        description="Prototype description",
+        photo_url="https://example.com/prototype.png",
+        type_id=10,
+    )
+
+
+def build_item_full_response(
+    item_id: int = 1,
+    *,
+    title: str = "Known item",
+    number: int = 7,
+) -> ItemFullResponse:
+    return ItemFullResponse(
+        id=item_id,
+        title=title,
+        number=number,
+        type=build_item_type_response(),
+        category=build_category_response(),
+        prototype=build_prototype_response(),
     )
 
 
@@ -493,3 +561,196 @@ class TestAuthMeRoute:
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "user_not_found"
+
+
+class TestItemRoutes:
+    def test_items_returns_paginated_catalog(
+        self,
+        client: TestClient,
+    ) -> None:
+        captured = {}
+        expected_response = ItemsResponse(
+            items=[build_item_full_response()],
+            meta={"limit": 100, "offset": 0, "total": 1},
+        )
+
+        async def fake_get_items(self, params):
+            captured["params"] = params
+            return expected_response
+
+        with patch.object(ItemsBusinessService, "get_items", fake_get_items):
+            response = client.get(
+                "/items",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+                params={"limit": 50, "offset": 10, "category_id": 3, "type_id": 4},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+        assert captured["params"].limit == 50
+        assert captured["params"].offset == 10
+        assert captured["params"].category_id == 3
+        assert captured["params"].type_id == 4
+
+    def test_items_requires_authorization_header(
+        self,
+        client: TestClient,
+    ) -> None:
+        response = client.get("/items")
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "missing_authorization"
+
+    def test_my_items_returns_hidden_and_collected_entries(
+        self,
+        client: TestClient,
+    ) -> None:
+        hidden_item = {
+            "state": "hidden",
+            "id": 1,
+            "title": None,
+            "number": None,
+            "type": build_item_type_response().model_dump(mode="json"),
+            "category": build_category_response().model_dump(mode="json"),
+            "prototype": build_prototype_response().model_dump(mode="json"),
+        }
+        collected_item = build_item_full_response(item_id=2, number=2)
+        expected_response = MyItemsResponse(
+            items=[hidden_item, collected_item],
+            meta={"limit": 100, "offset": 0, "total": 2},
+        )
+
+        async def fake_get_my_items(self, params):
+            return expected_response
+
+        with patch.object(ItemsBusinessService, "get_my_items", fake_get_my_items):
+            response = client.get(
+                "/items/my",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+
+    def test_get_item_returns_union_response(
+        self,
+        client: TestClient,
+    ) -> None:
+        expected_response = build_item_full_response(item_id=2, number=2)
+
+        async def fake_get_item(self, item_id):
+            assert item_id == 2
+            return expected_response
+
+        with patch.object(ItemsBusinessService, "get_item", fake_get_item):
+            response = client.get(
+                "/items/2",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+
+    def test_get_full_item_propagates_item_not_collected(
+        self,
+        client: TestClient,
+    ) -> None:
+        async def fake_get_full_item(self, item_id):
+            raise ItemNotCollectedError()
+
+        with patch.object(ItemsBusinessService, "get_full_item", fake_get_full_item):
+            response = client.get(
+                "/items/2/full",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+            )
+
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "item_not_collected"
+
+    def test_get_item_rating_returns_paginated_payload(
+        self,
+        client: TestClient,
+    ) -> None:
+        expected_response = ItemRatingResponse(
+            items=[
+                RatingEntryResponse(
+                    rank=1,
+                    created_at="2026-06-29T06:00:00Z",
+                    user=None,
+                )
+            ],
+            meta={"limit": 100, "offset": 0, "total": 1},
+        )
+
+        async def fake_get_item_rating(self, item_id, params):
+            assert item_id == 2
+            assert params.limit == 100
+            return expected_response
+
+        with patch.object(
+            ItemsBusinessService, "get_item_rating", fake_get_item_rating
+        ):
+            response = client.get(
+                "/items/2/rating",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+
+    def test_collect_item_by_secret_returns_validation_response(
+        self,
+        client: TestClient,
+    ) -> None:
+        token = "abc.def.ghijklmnop"
+        expected_response = ValidationResponse(
+            status="created",
+            validation=ValidationShortResponse(
+                id=5,
+                item_id=2,
+                rank=1,
+                created_at="2026-06-29T06:00:00Z",
+            ),
+            item=build_item_full_response(item_id=2, number=2),
+        )
+
+        async def fake_collect_item_by_secret(self, dto):
+            assert dto.token == token
+            return expected_response
+
+        with patch.object(
+            ItemsBusinessService,
+            "collect_item_by_secret",
+            fake_collect_item_by_secret,
+        ):
+            response = client.post(
+                "/items/secret",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+                json={"token": token},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+
+
+class TestItemRouteContracts:
+    def test_items_router_is_registered(self) -> None:
+        response = TestClient(app, raise_server_exceptions=False).get("/items")
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "missing_authorization"
+
+    def test_items_handlers_do_not_expose_session_dependency(self) -> None:
+        import inspect
+
+        for handler in [
+            item_api.get_items,
+            item_api.get_my_items,
+            item_api.get_item,
+            item_api.get_full_item,
+            item_api.get_item_rating,
+            item_api.collect_item_by_secret,
+        ]:
+            parameters = inspect.signature(handler).parameters
+            assert "session" not in parameters
+            assert "service" not in parameters

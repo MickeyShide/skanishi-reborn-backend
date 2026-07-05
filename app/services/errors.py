@@ -68,10 +68,27 @@ class UserNotFoundError(ServiceError):
     message = "User was not found."
 
 
+class ItemNotFoundError(ServiceError):
+    status_code = 404
+    code = "item_not_found"
+    message = "Item was not found."
+
+
+class SecretNotFoundError(ServiceError):
+    status_code = 404
+    code = "secret_not_found"
+    message = "Item secret was not found."
+
+
 class ForbiddenError(ServiceError):
     status_code = 403
     code = "forbidden"
     message = "Forbidden."
+
+
+class ItemNotCollectedError(ForbiddenError):
+    code = "item_not_collected"
+    message = "Item was not collected."
 
 
 class ServiceNotReadyError(ServiceError):
@@ -115,3 +132,27 @@ class RefreshReuseDetectedError(BusinessError):
     status_code = 403
     code = "refresh_reuse_detected"
     message = "Refresh token reuse detected."
+
+
+class InvalidSecretTokenError(BusinessError):
+    status_code = 400
+    code = "invalid_secret_token"
+    message = "Invalid secret token."
+
+
+class MissingSecretError(BusinessError):
+    status_code = 400
+    code = "missing_secret"
+    message = "Secret claim is missing."
+
+
+class InvalidSecretTypeError(BusinessError):
+    status_code = 400
+    code = "invalid_secret_type"
+    message = "Invalid secret token type."
+
+
+class ValidationConflictError(BusinessError):
+    status_code = 409
+    code = "validation_conflict"
+    message = "Validation conflict."
