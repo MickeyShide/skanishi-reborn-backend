@@ -51,3 +51,19 @@ class UserMe(UserPublic):
     role: UserRole = Field(
         description="Роль пользователя в системе",
     )
+
+
+class UserPrivacySettingsResponse(BaseModel):
+    """Настройки приватности текущего пользователя."""
+
+    privacy: bool = Field(
+        description="Флаг приватности профиля текущего пользователя",
+    )
+
+
+class UserPrivacySettingsUpdateRequest(BaseModel):
+    """Запрос на обновление настройки приватности."""
+
+    privacy: bool = Field(
+        description="Новое значение приватности профиля",
+    )

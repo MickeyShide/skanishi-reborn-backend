@@ -71,6 +71,7 @@ jobs:
           ACCESS_TOKEN_TTL_SECONDS=${{ vars.ACCESS_TOKEN_TTL_SECONDS }}
           REFRESH_TOKEN_TTL_SECONDS=${{ vars.REFRESH_TOKEN_TTL_SECONDS }}
           BOT_TOKEN=${{ vars.BOT_TOKEN }}
+          YANDEX_MAPS_API_KEY=${{ vars.YANDEX_MAPS_API_KEY }}
           FRONTEND_ORIGINS=${{ vars.FRONTEND_ORIGINS }}
           COOKIE_DOMAIN=${{ vars.COOKIE_DOMAIN }}
           COOKIE_SECURE=${{ vars.COOKIE_SECURE }}

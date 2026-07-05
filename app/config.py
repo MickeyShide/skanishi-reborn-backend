@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_TTL_SECONDS: int = Field(gt=0)
 
     BOT_TOKEN: str = Field(min_length=1)
+    YANDEX_MAPS_API_KEY: str | None = None
 
     FRONTEND_ORIGINS: Annotated[list[str], NoDecode]
 
@@ -66,6 +67,14 @@ class Settings(BaseSettings):
     @field_validator("COOKIE_DOMAIN", mode="before")
     @classmethod
     def parse_cookie_domain(cls, value: object) -> object:
+        if value == "":
+            return None
+
+        return value
+
+    @field_validator("YANDEX_MAPS_API_KEY", mode="before")
+    @classmethod
+    def parse_yandex_maps_api_key(cls, value: object) -> object:
         if value == "":
             return None
 

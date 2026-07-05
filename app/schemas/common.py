@@ -2,6 +2,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.db.models.enums import Rarity
+
 type Id = Annotated[
     int,
     Field(
@@ -59,6 +61,19 @@ class ItemRatingQueryParams(BaseModel):
     offset: Offset = 0
 
 
+class XpHistoryQueryParams(BaseModel):
+    """Параметры запроса истории XP."""
+
+    limit: Limit = 50
+    offset: Offset = 0
+    tag: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=32,
+        description="Фильтр по тегу XP события",
+    )
+
+
 class ItemsCatalogQueryParams(BaseModel):
     """Параметры запроса каталога."""
 
@@ -71,6 +86,42 @@ class ItemsCatalogQueryParams(BaseModel):
     type_id: Id | None = Field(
         default=None,
         description="Фильтр по типу предмета",
+    )
+
+
+class MapPointsQueryParams(BaseModel):
+    """Параметры запроса точек карты."""
+
+    lat: float | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+        description="Широта пользователя",
+    )
+    lon: float | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+        description="Долгота пользователя",
+    )
+    radius_meters: int = Field(
+        default=1000,
+        ge=1,
+        description="Радиус nearby в метрах",
+    )
+    rarity: Rarity | None = Field(
+        default=None,
+        description="Фильтр по редкости",
+    )
+    category: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description="Фильтр по категории точки",
+    )
+    done: bool | None = Field(
+        default=None,
+        description="Фильтр по прохождению точки",
     )
 
 

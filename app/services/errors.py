@@ -80,6 +80,12 @@ class SecretNotFoundError(ServiceError):
     message = "Item secret was not found."
 
 
+class ScanNotFoundError(ServiceError):
+    status_code = 404
+    code = "scan_not_found"
+    message = "Scan was not found."
+
+
 class ForbiddenError(ServiceError):
     status_code = 403
     code = "forbidden"
@@ -95,6 +101,12 @@ class ServiceNotReadyError(ServiceError):
     status_code = 503
     code = "service_not_ready"
     message = "Service is not ready."
+
+
+class MapApiKeyNotConfiguredError(ServiceError):
+    status_code = 503
+    code = "map_api_key_not_configured"
+    message = "Map API key is not configured."
 
 
 # app/business/errors.py
@@ -156,3 +168,9 @@ class ValidationConflictError(BusinessError):
     status_code = 409
     code = "validation_conflict"
     message = "Validation conflict."
+
+
+class RewardAlreadyClaimedError(BusinessError):
+    status_code = 409
+    code = "reward_already_claimed"
+    message = "Reward was already claimed."

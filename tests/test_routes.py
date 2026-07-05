@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 from app.api.v1 import auth as auth_api
 from app.api.v1 import health as health_api
 from app.api.v1 import item as item_api
+from app.api.v1 import map as map_api
 from app.api.v1 import profile as profile_api
+from app.api.v1 import user as user_api
 from app.api.v1.dependencies import get_current_user
 from app.config import settings
 from app.db.models.user import UserRole
@@ -21,7 +23,11 @@ from app.schemas.item import (
 )
 from app.schemas.item_type import ItemTypeResponse
 from app.schemas.profile import ValidationCountResponse
-from app.schemas.user import UserMe
+from app.schemas.user import (
+    UserMe,
+    UserPrivacySettingsResponse,
+    UserPrivacySettingsUpdateRequest,
+)
 from app.schemas.validation import (
     ItemRatingResponse,
     RatingEntryResponse,
@@ -30,6 +36,7 @@ from app.schemas.validation import (
 )
 from app.services.business.items import ItemsBusinessService
 from app.services.business.profile import ProfileBusinessService
+from app.services.business.user import UserBusinessService
 from app.services.errors import (
     ExpiredInitDataError,
     ExpiredRefreshTokenError,
@@ -736,6 +743,38 @@ class TestItemRoutes:
         assert response.json() == expected_response.model_dump(mode="json")
 
 
+class TestMapRuntimeRoutes:
+    def test_map_api_key_returns_public_browser_key(
+        self,
+        client: TestClient,
+    ) -> None:
+        with patch.object(settings, "YANDEX_MAPS_API_KEY", "yandex-browser-key"):
+            response = client.get("/map/api-key")
+
+        assert response.status_code == 200
+        assert response.json() == {"api_key": "yandex-browser-key"}
+
+    def test_map_api_key_returns_503_when_not_configured(
+        self,
+        client: TestClient,
+    ) -> None:
+        with patch.object(settings, "YANDEX_MAPS_API_KEY", None):
+            response = client.get("/map/api-key")
+
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "map_api_key_not_configured"
+
+    def test_map_api_key_does_not_require_authorization(
+        self,
+        client: TestClient,
+    ) -> None:
+        with patch.object(settings, "YANDEX_MAPS_API_KEY", "yandex-browser-key"):
+            response = client.get("/map/api-key")
+
+        assert response.status_code == 200
+        assert "api_key" in response.json()
+
+
 class TestProfileRoutes:
     def test_validation_count_returns_count(
         self,
@@ -767,6 +806,72 @@ class TestProfileRoutes:
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "missing_authorization"
+
+
+class TestUserPrivacyRoutes:
+    def test_get_privacy_settings_returns_value(
+        self,
+        client: TestClient,
+    ) -> None:
+        expected_response = UserPrivacySettingsResponse(privacy=True)
+
+        async def fake_get_privacy_settings(self):
+            return expected_response
+
+        with patch.object(
+            UserBusinessService,
+            "get_privacy_settings",
+            fake_get_privacy_settings,
+        ):
+            response = client.get(
+                "/users/settings/privacy",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+
+    def test_patch_privacy_settings_returns_updated_value(
+        self,
+        client: TestClient,
+    ) -> None:
+        expected_response = UserPrivacySettingsResponse(privacy=False)
+        captured = {}
+
+        async def fake_update_privacy_settings(self, dto):
+            captured["dto"] = dto
+            return expected_response
+
+        with patch.object(
+            UserBusinessService,
+            "update_privacy_settings",
+            fake_update_privacy_settings,
+        ):
+            response = client.patch(
+                "/users/settings/privacy",
+                headers={"Authorization": f"Bearer {build_access_token()}"},
+                json={"privacy": False},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == expected_response.model_dump(mode="json")
+        assert isinstance(captured["dto"], UserPrivacySettingsUpdateRequest)
+        assert captured["dto"].privacy is False
+
+    def test_user_privacy_routes_require_authorization_header(
+        self,
+        client: TestClient,
+    ) -> None:
+        get_response = client.get("/users/settings/privacy")
+        patch_response = client.patch(
+            "/users/settings/privacy",
+            json={"privacy": False},
+        )
+
+        assert get_response.status_code == 401
+        assert get_response.json()["error"]["code"] == "missing_authorization"
+        assert patch_response.status_code == 401
+        assert patch_response.json()["error"]["code"] == "missing_authorization"
 
 
 class TestItemRouteContracts:
@@ -807,3 +912,33 @@ class TestProfileRouteContracts:
         parameters = inspect.signature(profile_api.get_validation_count).parameters
         assert "session" not in parameters
         assert "service" not in parameters
+
+
+class TestMapRouteContracts:
+    def test_map_runtime_handler_does_not_expose_session_dependency(self) -> None:
+        import inspect
+
+        parameters = inspect.signature(map_api.get_map_api_key).parameters
+        assert "session" not in parameters
+        assert "service" not in parameters
+
+
+class TestUserRouteContracts:
+    def test_user_router_is_registered(self) -> None:
+        response = TestClient(app, raise_server_exceptions=False).get(
+            "/users/settings/privacy"
+        )
+
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "missing_authorization"
+
+    def test_user_handlers_do_not_expose_session_dependency(self) -> None:
+        import inspect
+
+        for handler in [
+            user_api.get_privacy_settings,
+            user_api.update_privacy_settings,
+        ]:
+            parameters = inspect.signature(handler).parameters
+            assert "session" not in parameters
+            assert "service" not in parameters

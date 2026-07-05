@@ -15,6 +15,7 @@ def build_settings_payload() -> dict[str, object]:
         "ACCESS_TOKEN_TTL_SECONDS": 900,
         "REFRESH_TOKEN_TTL_SECONDS": 2_592_000,
         "BOT_TOKEN": "123456:replace-me",
+        "YANDEX_MAPS_API_KEY": None,
         "FRONTEND_ORIGINS": ["http://localhost:5173"],
         "COOKIE_DOMAIN": None,
         "COOKIE_SECURE": False,
@@ -54,3 +55,11 @@ class SettingsValidationTests(TestCase):
 
         with self.assertRaises(ValidationError):
             Settings(**payload)
+
+    def test_empty_yandex_maps_api_key_is_normalized_to_none(self) -> None:
+        payload = build_settings_payload()
+        payload["YANDEX_MAPS_API_KEY"] = ""
+
+        settings = Settings(**payload)
+
+        self.assertIsNone(settings.YANDEX_MAPS_API_KEY)

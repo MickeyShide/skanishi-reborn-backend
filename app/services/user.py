@@ -63,3 +63,36 @@ class UserService(BaseService):
             user=user,
             telegram_user=telegram_user,
         )
+
+    async def update_privacy(
+        self,
+        user: User,
+        *,
+        is_private: bool,
+    ) -> User:
+        return await self.user_repository.update(
+            user,
+            is_private=is_private,
+        )
+
+    async def apply_scan_reward(
+        self,
+        user: User,
+        *,
+        reward_xp: int,
+    ) -> User:
+        next_level_xp = max(user.next_level_xp, 0)
+        new_xp = user.xp + reward_xp
+
+        if next_level_xp > 0:
+            clamped_xp = min(new_xp, next_level_xp)
+            level_progress = min(100, int((clamped_xp / next_level_xp) * 100))
+        else:
+            clamped_xp = new_xp
+            level_progress = 0
+
+        return await self.user_repository.update(
+            user,
+            xp=clamped_xp,
+            level_progress=level_progress,
+        )
