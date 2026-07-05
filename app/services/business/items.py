@@ -8,10 +8,8 @@ import jwt
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.requests import Request
 
 from app.config import settings
-from app.core.database import session_context
 from app.core.redis_client import redis_client, redis_fail_open
 from app.db.models.user import User, UserRole
 from app.db.models.validation import Validation
@@ -37,7 +35,7 @@ from app.schemas.validation import (
     ValidationResponse,
     ValidationShortResponse,
 )
-from app.services.business.base_authenticated import AuthenticatedBusinessService
+from app.services.business.base import BusinessService
 from app.services.errors import (
     InvalidAccessTokenError,
     InvalidSecretTokenError,
@@ -55,19 +53,18 @@ from app.services.user import UserService
 from app.services.validation import ValidationService
 
 
-class ItemsBusinessService(AuthenticatedBusinessService):
+class ItemsBusinessService(BusinessService):
     item_service: ItemService
     validation_service: ValidationService
+    item_secret_service: ItemSecretService
 
     def __init__(
         self,
-        request: Request,
         session: AsyncSession | None = None,
     ) -> None:
-        super().__init__(request=request, session=session)
+        super().__init__(session=session)
 
-    async def get_items(self, params: ItemsCatalogQueryParams) -> ItemsResponse:
-        await self.get_current_user()
+    async def get_items(self, current_user: User, params: ItemsCatalogQueryParams) -> ItemsResponse:
 
         rows = await self.item_service.get_active_catalog_page(
             limit=params.limit,
@@ -89,8 +86,7 @@ class ItemsBusinessService(AuthenticatedBusinessService):
             ),
         )
 
-    async def get_my_items(self, params: ItemsCatalogQueryParams) -> MyItemsResponse:
-        user = await self.get_current_user()
+    async def get_my_items(self, current_user: User, params: ItemsCatalogQueryParams) -> MyItemsResponse:
 
         rows = await self.item_service.get_active_catalog_page(
             limit=params.limit,
@@ -104,7 +100,7 @@ class ItemsBusinessService(AuthenticatedBusinessService):
         )
         item_ids = [item.id for item, *_ in rows]
         collected_item_ids = await self.validation_service.get_user_item_ids(
-            user_id=user.id,
+            user_id=current_user.id,
             item_ids=item_ids,
         )
 
@@ -123,23 +119,21 @@ class ItemsBusinessService(AuthenticatedBusinessService):
             ),
         )
 
-    async def get_item(self, item_id: int) -> ItemResponse:
-        user = await self.get_current_user()
+    async def get_item(self, current_user: User, item_id: int) -> ItemResponse:
         row = await self._get_catalog_item_or_raise(item_id)
         validation = await self.validation_service.get_user_item_validation(
-            user_id=user.id,
+            user_id=current_user.id,
             item_id=item_id,
         )
 
         return self._build_item_response(row, collected=validation is not None)
 
-    async def get_full_item(self, item_id: int) -> ItemFullResponse:
-        user = await self.get_current_user()
+    async def get_full_item(self, current_user: User, item_id: int) -> ItemFullResponse:
         row = await self._get_catalog_item_or_raise(item_id)
 
-        if not self._is_privileged(user):
+        if not self._is_privileged(current_user):
             validation = await self.validation_service.get_user_item_validation(
-                user_id=user.id,
+                user_id=current_user.id,
                 item_id=item_id,
             )
             if validation is None:
@@ -149,10 +143,10 @@ class ItemsBusinessService(AuthenticatedBusinessService):
 
     async def get_item_rating(
         self,
+        current_user: User,
         item_id: int,
         params: ItemRatingQueryParams,
     ) -> ItemRatingResponse:
-        await self.get_current_user()
 
         item = await self.item_service.get_active_item_by_id(item_id)
         if item is None:
@@ -179,64 +173,58 @@ class ItemsBusinessService(AuthenticatedBusinessService):
 
     async def collect_item_by_secret(
         self,
+        current_user: User,
         dto: SecretValidationRequest,
     ) -> ValidationResponse:
-        user_id = self._get_current_user_id()
         claims = self._decode_item_secret_token(dto.token)
 
-        async with session_context() as session:
-            user = await self._get_user_from_session(session, user_id)
-            item_service = ItemService(session)
-            validation_service = ValidationService(session)
-            item_secret_service = ItemSecretService(session)
+        item_secret = await self.item_secret_service.get_active_by_secret_hash(
+            self.item_secret_service.hash_secret(claims.secret)
+        )
+        if item_secret is None:
+            raise SecretNotFoundError()
 
-            item_secret = await item_secret_service.get_active_by_secret_hash(
-                item_secret_service.hash_secret(claims.secret)
+        catalog_row = await self.item_service.get_active_catalog_item(
+            item_secret.item_id
+        )
+        if catalog_row is None:
+            raise SecretNotFoundError()
+
+        item = await self.item_service.get_active_item_for_update(item_secret.item_id)
+        if item is None:
+            raise SecretNotFoundError()
+
+        existing_validation = await self.validation_service.get_user_item_validation(
+            user_id=current_user.id,
+            item_id=item.id,
+        )
+        item_response = self._build_full_item_response(catalog_row)
+
+        if existing_validation is not None:
+            return ValidationResponse(
+                status="already_collected",
+                validation=self._build_validation_short_response(
+                    existing_validation
+                ),
+                item=item_response,
             )
-            if item_secret is None:
-                raise SecretNotFoundError()
 
-            catalog_row = await item_service.get_active_catalog_item(
-                item_secret.item_id
-            )
-            if catalog_row is None:
-                raise SecretNotFoundError()
+        rank = item.validation_count + 1
 
-            item = await item_service.get_active_item_for_update(item_secret.item_id)
-            if item is None:
-                raise SecretNotFoundError()
+        await self.item_service.increment_validation_count(item)
 
-            existing_validation = await validation_service.get_user_item_validation(
-                user_id=user.id,
+        try:
+            validation = await self.validation_service.create_validation(
+                user_id=current_user.id,
                 item_id=item.id,
+                item_secret_id=item_secret.id,
+                rank=rank,
             )
-            item_response = self._build_full_item_response(catalog_row)
-
-            if existing_validation is not None:
-                return ValidationResponse(
-                    status="already_collected",
-                    validation=self._build_validation_short_response(
-                        existing_validation
-                    ),
-                    item=item_response,
-                )
-
-            rank = item.validation_count + 1
-
-            await item_service.increment_validation_count(item)
-
-            try:
-                validation = await validation_service.create_validation(
-                    user_id=user.id,
-                    item_id=item.id,
-                    item_secret_id=item_secret.id,
-                    rank=rank,
-                )
-            except IntegrityError as exc:
-                raise ValidationConflictError() from exc
+        except IntegrityError as exc:
+            raise ValidationConflictError() from exc
 
         await redis_fail_open(
-            lambda: redis_client.delete(f"user:{user_id}:validation_count"),
+            lambda: redis_client.delete(f"user:{current_user.id}:validation_count"),
             default=0,
         )
 
@@ -253,19 +241,8 @@ class ItemsBusinessService(AuthenticatedBusinessService):
 
         return row
 
-    async def _get_user_from_session(self, session: AsyncSession, user_id: int) -> User:
-        user_service = UserService(session)
 
-        try:
-            return await user_service.get_user_by_id(user_id)
-        except ObjectNotFoundError as exc:
-            raise UserNotFoundError() from exc
 
-    def _get_current_user_id(self) -> int:
-        try:
-            return int(self.get_access_claims().sub)
-        except ValueError as exc:
-            raise InvalidAccessTokenError() from exc
 
     def _decode_item_secret_token(self, raw_token: str) -> ItemSecretTokenClaims:
         for candidate in self._get_secret_token_candidates(raw_token):

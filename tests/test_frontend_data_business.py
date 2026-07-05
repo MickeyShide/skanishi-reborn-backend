@@ -39,8 +39,9 @@ def build_map_point(
 
 class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
     async def test_get_map_points_sorts_nearby_and_filters_done(self) -> None:
+        user = SimpleNamespace(id=77)
         service = object.__new__(FrontendDataBusinessService)
-        service.get_current_user = AsyncMock(return_value=SimpleNamespace(id=77))
+        service.get_current_user = AsyncMock(return_value=user)
         service.quest_service = MagicMock()
         service.quest_service.get_active_quests = AsyncMock(
             return_value=[SimpleNamespace(id="quest-1", name="Тени Старого города")]
@@ -74,6 +75,7 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
 
         result = await FrontendDataBusinessService.get_map_points(
             service,
+            user,
             MapPointsQueryParams(
                 lat=55.751244,
                 lon=37.618423,
@@ -82,9 +84,9 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual([point.id for point in result.nearbyPoints], ["near-point"])
-        self.assertEqual(result.nearbyPoints[0].distance, "44 м")
-        self.assertEqual(result.pointDetails["near-point"].status, "Не пройдено")
+        self.assertEqual([point.id for point in result.nearby_points], ["near-point"])
+        self.assertEqual(result.nearby_points[0].distance, "44 м")
+        self.assertEqual(result.point_details["near-point"].status, "Не пройдено")
 
     async def test_claim_scan_reward_creates_event_and_returns_updated_user(
         self,
@@ -138,10 +140,11 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         service.xp_event_service.create_scan_claim_event = AsyncMock()
         service.user_service = MagicMock()
         service.user_service.apply_scan_reward = AsyncMock(return_value=updated_user)
-        service.user = user
+        service.user_service.apply_scan_reward = AsyncMock(return_value=updated_user)
 
         result = await FrontendDataBusinessService.claim_scan_reward(
             service,
+            user,
             ScanClaimRequest(scan_id="roof-beacon"),
         )
 
@@ -155,8 +158,9 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         self.assertIs(service.user, updated_user)
 
     async def test_claim_scan_reward_rejects_duplicate(self) -> None:
+        user = SimpleNamespace(id=77)
         service = object.__new__(FrontendDataBusinessService)
-        service.get_current_user = AsyncMock(return_value=SimpleNamespace(id=77))
+        service.get_current_user = AsyncMock(return_value=user)
         service.map_point_service = MagicMock()
         service.map_point_service.get_active_point_by_id = AsyncMock(
             return_value=build_map_point(
@@ -179,5 +183,6 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         with self.assertRaises(RewardAlreadyClaimedError):
             await FrontendDataBusinessService.claim_scan_reward(
                 service,
+                user,
                 ScanClaimRequest(scan_id="roof-beacon"),
             )

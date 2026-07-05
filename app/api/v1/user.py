@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
+
+from app.api.v1.dependencies import CurrentUser
 
 from app.schemas.user import (
     UserPrivacySettingsResponse,
@@ -10,13 +12,13 @@ router = APIRouter(prefix="/users", tags=["User"])
 
 
 @router.get("/settings/privacy", response_model=UserPrivacySettingsResponse)
-async def get_privacy_settings(request: Request):
-    return await UserBusinessService(request=request).get_privacy_settings()
+async def get_privacy_settings(current_user: CurrentUser):
+    return await UserBusinessService().get_privacy_settings(current_user=current_user)
 
 
 @router.patch("/settings/privacy", response_model=UserPrivacySettingsResponse)
 async def update_privacy_settings(
-    request: Request,
+    current_user: CurrentUser,
     dto: UserPrivacySettingsUpdateRequest,
 ):
-    return await UserBusinessService(request=request).update_privacy_settings(dto=dto)
+    return await UserBusinessService().update_privacy_settings(current_user=current_user, dto=dto)

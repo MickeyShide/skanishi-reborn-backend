@@ -174,7 +174,7 @@ class AuthBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
 
 class AuthEndpointContractTests(TestCase):
     def test_auth_init_route_is_registered_in_application(self) -> None:
-        response = TestClient(app, raise_server_exceptions=False).post("/auth/init")
+        response = TestClient(app, raise_server_exceptions=False).post("/api/v1/auth/init")
 
         self.assertEqual(
             response.status_code,
@@ -202,13 +202,13 @@ class AuthEndpointContractTests(TestCase):
         )
 
     def test_auth_refresh_requires_refresh_cookie(self) -> None:
-        response = TestClient(app, raise_server_exceptions=False).post("/auth/refresh")
+        response = TestClient(app, raise_server_exceptions=False).post("/api/v1/auth/refresh")
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "missing_refresh_token")
 
     def test_auth_me_requires_authorization_header(self) -> None:
-        response = TestClient(app, raise_server_exceptions=False).get("/auth/me")
+        response = TestClient(app, raise_server_exceptions=False).get("/api/v1/auth/me")
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "missing_authorization")

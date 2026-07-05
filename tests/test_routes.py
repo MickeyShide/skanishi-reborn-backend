@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,6 +8,7 @@ from app.api.v1 import auth as auth_api
 from app.api.v1 import health as health_api
 from app.api.v1 import item as item_api
 from app.api.v1 import map as map_api
+from app.api import runtime as runtime_api
 from app.api.v1 import profile as profile_api
 from app.api.v1 import user as user_api
 from app.api.v1.dependencies import get_current_user
@@ -52,8 +54,10 @@ from app.services.token import TokenService
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app, raise_server_exceptions=False)
+def client():
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, role='user', tg_id=777)
+    yield TestClient(app, raise_server_exceptions=False)
+    app.dependency_overrides.clear()
 
 
 def build_user_me() -> UserMe:
@@ -130,7 +134,7 @@ def build_item_full_response(
 
 class TestHealthRoutes:
     def test_live_health_returns_ok(self, client: TestClient) -> None:
-        response = client.get("/health/live")
+        response = client.get("/api/v1/health/live")
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
@@ -146,7 +150,7 @@ class TestHealthRoutes:
             patch.object(health_api, "check_database", check_ok),
             patch.object(health_api, "check_redis", check_ok),
         ):
-            response = client.get("/health/ready")
+            response = client.get("/api/v1/health/ready")
 
         assert response.status_code == 200
         assert response.json() == {
@@ -169,7 +173,7 @@ class TestHealthRoutes:
             patch.object(health_api, "check_database", check_database_failed),
             patch.object(health_api, "check_redis", check_redis_ok),
         ):
-            response = client.get("/health/ready")
+            response = client.get("/api/v1/health/ready")
 
         assert response.status_code == 503
         assert response.json()["error"]["details"] == {
@@ -191,7 +195,7 @@ class TestHealthRoutes:
             patch.object(health_api, "check_database", check_database_failed),
             patch.object(health_api, "check_redis", check_redis_failed),
         ):
-            response = client.get("/health/ready")
+            response = client.get("/api/v1/health/ready")
 
         assert response.status_code == 503
         assert response.json()["error"]["details"] == {
@@ -208,10 +212,10 @@ class TestAuthInitRoute:
         expected_response = build_token_response()
         captured: dict[str, object] = {}
 
-        async def fake_authenticate(self, dto, request, response):
+        async def fake_authenticate(self, request, response, dto):
             captured["dto"] = dto
             captured["content_type"] = request.headers.get("content-type")
-            response.set_cookie("refresh_token", "refresh-token", path="/auth/refresh")
+            response.set_cookie("refresh_token", "refresh-token", path="/api/v1/auth/refresh")
             return expected_response
 
         with patch.object(
@@ -220,12 +224,12 @@ class TestAuthInitRoute:
             fake_authenticate,
         ):
             response = client.post(
-                "/auth/init",
+                "/api/v1/auth/init",
                 json={"tg_web_app_data": "signed-init-data"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
         assert isinstance(captured["dto"], TelegramAuthRequest)
         assert captured["dto"].tg_web_app_data == "signed-init-data"
         assert "application/json" in str(captured["content_type"])
@@ -237,7 +241,7 @@ class TestAuthInitRoute:
     ) -> None:
         captured: dict[str, object] = {}
 
-        async def fake_authenticate(self, dto, request, response):
+        async def fake_authenticate(self, request, response, dto):
             captured["dto"] = dto
             return build_token_response()
 
@@ -247,7 +251,7 @@ class TestAuthInitRoute:
             fake_authenticate,
         ):
             response = client.post(
-                "/auth/init",
+                "/api/v1/auth/init",
                 data={"tg_web_app_data": "signed-init-data"},
             )
 
@@ -260,7 +264,7 @@ class TestAuthInitRoute:
     ) -> None:
         captured: dict[str, object] = {}
 
-        async def fake_authenticate(self, dto, request, response):
+        async def fake_authenticate(self, request, response, dto):
             captured["dto"] = dto
             return build_token_response()
 
@@ -270,7 +274,7 @@ class TestAuthInitRoute:
             fake_authenticate,
         ):
             response = client.post(
-                "/auth/init",
+                "/api/v1/auth/init",
                 content=b"tg_web_app_data=signed-init-data",
             )
 
@@ -281,7 +285,7 @@ class TestAuthInitRoute:
         self,
         client: TestClient,
     ) -> None:
-        response = client.post("/auth/init", json={})
+        response = client.post("/api/v1/auth/init", json={})
 
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "validation_error"
@@ -290,7 +294,7 @@ class TestAuthInitRoute:
         self,
         client: TestClient,
     ) -> None:
-        async def fake_authenticate(self, dto, request, response):
+        async def fake_authenticate(self, request, response, dto):
             raise InvalidInitDataError()
 
         with patch.object(
@@ -299,7 +303,7 @@ class TestAuthInitRoute:
             fake_authenticate,
         ):
             response = client.post(
-                "/auth/init",
+                "/api/v1/auth/init",
                 json={"tg_web_app_data": "bad-init-data"},
             )
 
@@ -310,7 +314,7 @@ class TestAuthInitRoute:
         self,
         client: TestClient,
     ) -> None:
-        async def fake_authenticate(self, dto, request, response):
+        async def fake_authenticate(self, request, response, dto):
             raise InvalidTelegramSignatureError()
 
         with patch.object(
@@ -319,7 +323,7 @@ class TestAuthInitRoute:
             fake_authenticate,
         ):
             response = client.post(
-                "/auth/init",
+                "/api/v1/auth/init",
                 json={"tg_web_app_data": "bad-signature"},
             )
 
@@ -330,7 +334,7 @@ class TestAuthInitRoute:
         self,
         client: TestClient,
     ) -> None:
-        async def fake_authenticate(self, dto, request, response):
+        async def fake_authenticate(self, request, response, dto):
             raise ExpiredInitDataError()
 
         with patch.object(
@@ -339,7 +343,7 @@ class TestAuthInitRoute:
             fake_authenticate,
         ):
             response = client.post(
-                "/auth/init",
+                "/api/v1/auth/init",
                 json={"tg_web_app_data": "expired-init-data"},
             )
 
@@ -360,27 +364,27 @@ class TestAuthRefreshRoute:
             response.set_cookie(
                 "refresh_token",
                 "new-refresh-token",
-                path="/auth/refresh",
+                path="/api/v1/auth/refresh",
             )
             return expected_response
 
         with patch.object(auth_api.AuthBusinessService, "refresh", fake_refresh):
             response = client.post(
-                "/auth/refresh",
+                "/api/v1/auth/refresh",
                 cookies={"refresh_token": "old-refresh-token"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
         assert captured["cookie"] == "old-refresh-token"
         assert "refresh_token=new-refresh-token" in response.headers["set-cookie"]
-        assert "Path=/auth/refresh" in response.headers["set-cookie"]
+        assert "Path=/api/v1/auth/refresh" in response.headers["set-cookie"]
 
     def test_refresh_requires_refresh_cookie(
         self,
         client: TestClient,
     ) -> None:
-        response = client.post("/auth/refresh")
+        response = client.post("/api/v1/auth/refresh")
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "missing_refresh_token"
@@ -394,7 +398,7 @@ class TestAuthRefreshRoute:
 
         with patch.object(auth_api.AuthBusinessService, "refresh", fake_refresh):
             response = client.post(
-                "/auth/refresh",
+                "/api/v1/auth/refresh",
                 cookies={"refresh_token": "broken-token"},
             )
 
@@ -421,7 +425,7 @@ class TestAuthRefreshRoute:
 
         with patch.object(auth_api.AuthBusinessService, "refresh", fake_refresh):
             response = client.post(
-                "/auth/refresh",
+                "/api/v1/auth/refresh",
                 cookies={"refresh_token": "broken-token"},
             )
 
@@ -434,7 +438,7 @@ class TestAuthRefreshRoute:
     ) -> None:
         with patch.object(settings, "COOKIE_SAMESITE", "none"):
             response = client.post(
-                "/auth/refresh",
+                "/api/v1/auth/refresh",
                 cookies={
                     "refresh_token": "refresh-token",
                     "csrf_token": "csrf-token",
@@ -456,7 +460,7 @@ class TestAuthRefreshRoute:
             patch.object(auth_api.AuthBusinessService, "refresh", fake_refresh),
         ):
             response = client.post(
-                "/auth/refresh",
+                "/api/v1/auth/refresh",
                 cookies={
                     "refresh_token": "refresh-token",
                     "csrf_token": "csrf-token",
@@ -476,7 +480,7 @@ class TestAuthLogoutRoute:
 
         with patch.object(auth_api.AuthBusinessService, "logout", fake_logout):
             response = client.post(
-                "/auth/logout",
+                "/api/v1/auth/logout",
                 cookies={"refresh_token": "refresh-token"},
             )
 
@@ -490,7 +494,7 @@ class TestAuthLogoutRoute:
     ) -> None:
         with patch.object(settings, "COOKIE_SAMESITE", "none"):
             response = client.post(
-                "/auth/logout",
+                "/api/v1/auth/logout",
                 cookies={
                     "refresh_token": "refresh-token",
                     "csrf_token": "csrf-token",
@@ -504,7 +508,7 @@ class TestAuthLogoutRoute:
         self,
         client: TestClient,
     ) -> None:
-        response = client.post("/auth/logout")
+        response = client.post("/api/v1/auth/logout")
 
         assert response.status_code == 204
         assert response.content == b""
@@ -523,20 +527,21 @@ class TestAuthMeRoute:
         app.dependency_overrides[get_current_user] = fake_current_user
         try:
             response = client.get(
-                "/auth/me",
+                "/api/v1/auth/me",
                 headers={"Authorization": "Bearer access-token"},
             )
         finally:
             app.dependency_overrides.clear()
 
         assert response.status_code == 200
-        assert response.json() == user.model_dump(mode="json")
+        assert response.json() == user.model_dump(mode="json", by_alias=True)
 
     def test_me_requires_authorization_header(
         self,
         client: TestClient,
     ) -> None:
-        response = client.get("/auth/me")
+        app.dependency_overrides.clear()
+        response = client.get("/api/v1/auth/me")
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "missing_authorization"
@@ -545,8 +550,9 @@ class TestAuthMeRoute:
         self,
         client: TestClient,
     ) -> None:
+        app.dependency_overrides.clear()
         response = client.get(
-            "/auth/me",
+            "/api/v1/auth/me",
             headers={"Authorization": "invalid"},
         )
 
@@ -563,7 +569,7 @@ class TestAuthMeRoute:
         app.dependency_overrides[get_current_user] = fake_current_user
         try:
             response = client.get(
-                "/auth/me",
+                "/api/v1/auth/me",
                 headers={"Authorization": "Bearer access-token"},
             )
         finally:
@@ -584,19 +590,19 @@ class TestItemRoutes:
             meta={"limit": 100, "offset": 0, "total": 1},
         )
 
-        async def fake_get_items(self, params):
+        async def fake_get_items(self, current_user, params):
             captured["params"] = params
             return expected_response
 
         with patch.object(ItemsBusinessService, "get_items", fake_get_items):
             response = client.get(
-                "/items",
+                "/api/v1/items",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
                 params={"limit": 50, "offset": 10, "category_id": 3, "type_id": 4},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
         assert captured["params"].limit == 50
         assert captured["params"].offset == 10
         assert captured["params"].category_id == 3
@@ -606,7 +612,8 @@ class TestItemRoutes:
         self,
         client: TestClient,
     ) -> None:
-        response = client.get("/items")
+        app.dependency_overrides.clear()
+        response = client.get("/api/v1/items")
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "missing_authorization"
@@ -620,9 +627,9 @@ class TestItemRoutes:
             "id": 1,
             "title": None,
             "number": None,
-            "type": build_item_type_response().model_dump(mode="json"),
-            "category": build_category_response().model_dump(mode="json"),
-            "prototype": build_prototype_response().model_dump(mode="json"),
+            "type": build_item_type_response().model_dump(mode="json", by_alias=True),
+            "category": build_category_response().model_dump(mode="json", by_alias=True),
+            "prototype": build_prototype_response().model_dump(mode="json", by_alias=True),
         }
         collected_item = build_item_full_response(item_id=2, number=2)
         expected_response = MyItemsResponse(
@@ -630,17 +637,17 @@ class TestItemRoutes:
             meta={"limit": 100, "offset": 0, "total": 2},
         )
 
-        async def fake_get_my_items(self, params):
+        async def fake_get_my_items(self, current_user, params):
             return expected_response
 
         with patch.object(ItemsBusinessService, "get_my_items", fake_get_my_items):
             response = client.get(
-                "/items/my",
+                "/api/v1/items/my",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
 
     def test_get_item_returns_union_response(
         self,
@@ -648,29 +655,29 @@ class TestItemRoutes:
     ) -> None:
         expected_response = build_item_full_response(item_id=2, number=2)
 
-        async def fake_get_item(self, item_id):
+        async def fake_get_item(self, current_user, item_id):
             assert item_id == 2
             return expected_response
 
         with patch.object(ItemsBusinessService, "get_item", fake_get_item):
             response = client.get(
-                "/items/2",
+                "/api/v1/items/2",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
 
     def test_get_full_item_propagates_item_not_collected(
         self,
         client: TestClient,
     ) -> None:
-        async def fake_get_full_item(self, item_id):
+        async def fake_get_full_item(self, current_user, item_id):
             raise ItemNotCollectedError()
 
         with patch.object(ItemsBusinessService, "get_full_item", fake_get_full_item):
             response = client.get(
-                "/items/2/full",
+                "/api/v1/items/2/full",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
@@ -692,7 +699,7 @@ class TestItemRoutes:
             meta={"limit": 100, "offset": 0, "total": 1},
         )
 
-        async def fake_get_item_rating(self, item_id, params):
+        async def fake_get_item_rating(self, current_user, item_id, params):
             assert item_id == 2
             assert params.limit == 100
             return expected_response
@@ -701,12 +708,12 @@ class TestItemRoutes:
             ItemsBusinessService, "get_item_rating", fake_get_item_rating
         ):
             response = client.get(
-                "/items/2/rating",
+                "/api/v1/items/2/rating",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
 
     def test_collect_item_by_secret_returns_validation_response(
         self,
@@ -724,7 +731,7 @@ class TestItemRoutes:
             item=build_item_full_response(item_id=2, number=2),
         )
 
-        async def fake_collect_item_by_secret(self, dto):
+        async def fake_collect_item_by_secret(self, current_user, dto):
             assert dto.token == token
             return expected_response
 
@@ -734,13 +741,13 @@ class TestItemRoutes:
             fake_collect_item_by_secret,
         ):
             response = client.post(
-                "/items/secret",
+                "/api/v1/items/secret",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
                 json={"token": token},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
 
 
 class TestMapRuntimeRoutes:
@@ -782,7 +789,7 @@ class TestProfileRoutes:
     ) -> None:
         expected_response = ValidationCountResponse(count=12)
 
-        async def fake_get_validation_count(self):
+        async def fake_get_validation_count(self, current_user):
             return expected_response
 
         with patch.object(
@@ -791,18 +798,19 @@ class TestProfileRoutes:
             fake_get_validation_count,
         ):
             response = client.get(
-                "/profile/validations/count",
+                "/api/v1/profile/validations/count",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
 
     def test_validation_count_requires_authorization_header(
         self,
         client: TestClient,
     ) -> None:
-        response = client.get("/profile/validations/count")
+        app.dependency_overrides.clear()
+        response = client.get("/api/v1/profile/validations/count")
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "missing_authorization"
@@ -815,7 +823,7 @@ class TestUserPrivacyRoutes:
     ) -> None:
         expected_response = UserPrivacySettingsResponse(privacy=True)
 
-        async def fake_get_privacy_settings(self):
+        async def fake_get_privacy_settings(self, current_user):
             return expected_response
 
         with patch.object(
@@ -824,12 +832,12 @@ class TestUserPrivacyRoutes:
             fake_get_privacy_settings,
         ):
             response = client.get(
-                "/users/settings/privacy",
+                "/api/v1/users/settings/privacy",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
 
     def test_patch_privacy_settings_returns_updated_value(
         self,
@@ -838,7 +846,7 @@ class TestUserPrivacyRoutes:
         expected_response = UserPrivacySettingsResponse(privacy=False)
         captured = {}
 
-        async def fake_update_privacy_settings(self, dto):
+        async def fake_update_privacy_settings(self, current_user, dto):
             captured["dto"] = dto
             return expected_response
 
@@ -848,13 +856,13 @@ class TestUserPrivacyRoutes:
             fake_update_privacy_settings,
         ):
             response = client.patch(
-                "/users/settings/privacy",
+                "/api/v1/users/settings/privacy",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
                 json={"privacy": False},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected_response.model_dump(mode="json")
+        assert response.json() == expected_response.model_dump(mode="json", by_alias=True)
         assert isinstance(captured["dto"], UserPrivacySettingsUpdateRequest)
         assert captured["dto"].privacy is False
 
@@ -862,9 +870,10 @@ class TestUserPrivacyRoutes:
         self,
         client: TestClient,
     ) -> None:
-        get_response = client.get("/users/settings/privacy")
+        app.dependency_overrides.clear()
+        get_response = client.get("/api/v1/users/settings/privacy")
         patch_response = client.patch(
-            "/users/settings/privacy",
+            "/api/v1/users/settings/privacy",
             json={"privacy": False},
         )
 
@@ -876,7 +885,7 @@ class TestUserPrivacyRoutes:
 
 class TestItemRouteContracts:
     def test_items_router_is_registered(self) -> None:
-        response = TestClient(app, raise_server_exceptions=False).get("/items")
+        response = TestClient(app, raise_server_exceptions=False).get("/api/v1/items")
 
         assert response.status_code == 401
         assert response.json()["error"]["code"] == "missing_authorization"
@@ -900,7 +909,7 @@ class TestItemRouteContracts:
 class TestProfileRouteContracts:
     def test_profile_router_is_registered(self) -> None:
         response = TestClient(app, raise_server_exceptions=False).get(
-            "/profile/validations/count"
+            "/api/v1/profile/validations/count"
         )
 
         assert response.status_code == 401
@@ -918,7 +927,7 @@ class TestMapRouteContracts:
     def test_map_runtime_handler_does_not_expose_session_dependency(self) -> None:
         import inspect
 
-        parameters = inspect.signature(map_api.get_map_api_key).parameters
+        parameters = inspect.signature(runtime_api.get_map_api_key).parameters
         assert "session" not in parameters
         assert "service" not in parameters
 
@@ -926,7 +935,7 @@ class TestMapRouteContracts:
 class TestUserRouteContracts:
     def test_user_router_is_registered(self) -> None:
         response = TestClient(app, raise_server_exceptions=False).get(
-            "/users/settings/privacy"
+            "/api/v1/users/settings/privacy"
         )
 
         assert response.status_code == 401

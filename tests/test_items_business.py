@@ -71,8 +71,10 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.validation_service = MagicMock()
         service.validation_service.get_user_item_ids = AsyncMock(return_value={2})
 
+        user = await service.get_current_user()
         result = await ItemsBusinessService.get_my_items(
             service,
+            user,
             ItemsCatalogQueryParams(),
         )
 
@@ -94,7 +96,8 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(ItemNotCollectedError):
-            await ItemsBusinessService.get_full_item(service, 1)
+            user = await service.get_current_user()
+            await ItemsBusinessService.get_full_item(service, user, 1)
 
     async def test_get_full_item_allows_admin_without_validation(self) -> None:
         service = object.__new__(ItemsBusinessService)
@@ -105,7 +108,8 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.validation_service = MagicMock()
         service.validation_service.get_user_item_validation = AsyncMock()
 
-        result = await ItemsBusinessService.get_full_item(service, 1)
+        user = await service.get_current_user()
+        result = await ItemsBusinessService.get_full_item(service, user, 1)
 
         self.assertEqual(result.state, "collected")
         self.assertEqual(result.title, "Known item")
@@ -132,8 +136,10 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         )
         service.validation_service.count_item_rating = AsyncMock(return_value=1)
 
+        user = await service.get_current_user()
         result = await ItemsBusinessService.get_item_rating(
             service,
+            user,
             1,
             ItemRatingQueryParams(),
         )
@@ -183,14 +189,13 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         user_service = MagicMock()
         user_service.get_user_by_id = AsyncMock(return_value=SimpleNamespace(id=77))
 
-        @asynccontextmanager
-        async def fake_session_context():
-            yield object()
-
-        redis_fail_open = AsyncMock(return_value=0)
+        service.item_service = item_service
+        service.validation_service = validation_service
+        service.item_secret_service = item_secret_service
+        service.user_service = user_service
+        redis_fail_open = AsyncMock()
 
         with (
-            patch("app.services.business.items.session_context", fake_session_context),
             patch("app.services.business.items.ItemService", return_value=item_service),
             patch(
                 "app.services.business.items.ValidationService",
@@ -205,6 +210,7 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         ):
             result = await ItemsBusinessService.collect_item_by_secret(
                 service,
+                SimpleNamespace(id=77),
                 SecretValidationRequest(token=token),
             )
 
@@ -258,14 +264,13 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         user_service = MagicMock()
         user_service.get_user_by_id = AsyncMock(return_value=SimpleNamespace(id=77))
 
-        @asynccontextmanager
-        async def fake_session_context():
-            yield object()
-
-        redis_fail_open = AsyncMock(return_value=0)
+        service.item_service = item_service
+        service.validation_service = validation_service
+        service.item_secret_service = item_secret_service
+        service.user_service = user_service
+        redis_fail_open = AsyncMock()
 
         with (
-            patch("app.services.business.items.session_context", fake_session_context),
             patch("app.services.business.items.ItemService", return_value=item_service),
             patch(
                 "app.services.business.items.ValidationService",
@@ -280,6 +285,7 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         ):
             result = await ItemsBusinessService.collect_item_by_secret(
                 service,
+                SimpleNamespace(id=77),
                 SecretValidationRequest(token=token),
             )
 

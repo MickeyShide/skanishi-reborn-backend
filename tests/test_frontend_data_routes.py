@@ -1,17 +1,20 @@
+from types import SimpleNamespace
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from fastapi.testclient import TestClient
 
 from app.api.v1 import achievement as achievement_api
 from app.api.v1 import app_state as app_state_api
 from app.api.v1 import map as map_api
+from app.api import runtime as runtime_api
 from app.api.v1 import quest as quest_api
 from app.api.v1 import scan as scan_api
 from app.api.v1 import xp as xp_api
 from app.db.models.enums import Rarity, UIColorToken
 from app.db.models.user import UserRole
 from app.main import app
+from app.api.v1.dependencies import get_current_user
 from app.schemas.frontend import (
     AchievementResponse,
     AchievementsResponse,
@@ -134,9 +137,9 @@ def build_app_state_response() -> FrontendAppStateResponse:
                 color=UIColorToken.CYAN,
             )
         ],
-        mapPins=build_map_points_response().mapPins,
-        nearbyPoints=build_map_points_response().nearbyPoints,
-        pointDetails=build_map_points_response().pointDetails,
+        mapPins=build_map_points_response().map_pins,
+        nearbyPoints=build_map_points_response().nearby_points,
+        pointDetails=build_map_points_response().point_details,
         stats=[
             StatCardResponse(value="218", label="СКАНОВ", color=UIColorToken.CYAN)
         ],
@@ -146,7 +149,7 @@ def build_app_state_response() -> FrontendAppStateResponse:
                 title="История XP",
                 subtitle="6 840 за сезон",
                 color=UIColorToken.CYAN,
-                to="/xp",
+                to="/api/v1/xp",
             )
         ],
         xpHistoryGroups=[
@@ -176,6 +179,12 @@ def build_app_state_response() -> FrontendAppStateResponse:
 
 
 class TestFrontendDataRoutes:
+    def setup_method(self) -> None:
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, role='user', tg_id=777)
+        
+    def teardown_method(self) -> None:
+        app.dependency_overrides.clear()
+
     @property
     def client(self) -> TestClient:
         return TestClient(app, raise_server_exceptions=False)
@@ -183,7 +192,7 @@ class TestFrontendDataRoutes:
     def test_app_state_returns_payload(self) -> None:
         expected = build_app_state_response()
 
-        async def fake_get_app_state(self):
+        async def fake_get_app_state(self, current_user):
             return expected
 
         with patch.object(
@@ -192,18 +201,18 @@ class TestFrontendDataRoutes:
             fake_get_app_state,
         ):
             response = self.client.get(
-                "/app/state",
+                "/api/v1/app/state",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected.model_dump(mode="json")
+        assert response.json() == expected.model_dump(mode="json", by_alias=True)
 
     def test_map_points_returns_payload_and_parses_query(self) -> None:
         expected = build_map_points_response()
         captured = {}
 
-        async def fake_get_map_points(self, params):
+        async def fake_get_map_points(self, current_user, params):
             captured["params"] = params
             return expected
 
@@ -213,7 +222,7 @@ class TestFrontendDataRoutes:
             fake_get_map_points,
         ):
             response = self.client.get(
-                "/map/points",
+                "/api/v1/map/points",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
                 params={
                     "lat": 55.75,
@@ -224,7 +233,7 @@ class TestFrontendDataRoutes:
             )
 
         assert response.status_code == 200
-        assert response.json() == expected.model_dump(mode="json")
+        assert response.json() == expected.model_dump(mode="json", by_alias=True)
         assert captured["params"].lat == 55.75
         assert captured["params"].lon == 37.61
         assert captured["params"].radius_meters == 500
@@ -244,7 +253,7 @@ class TestFrontendDataRoutes:
             ]
         )
 
-        async def fake_get_quests(self):
+        async def fake_get_quests(self, current_user):
             return expected
 
         with patch.object(
@@ -253,12 +262,12 @@ class TestFrontendDataRoutes:
             fake_get_quests,
         ):
             response = self.client.get(
-                "/quests",
+                "/api/v1/quests",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected.model_dump(mode="json")
+        assert response.json() == expected.model_dump(mode="json", by_alias=True)
 
     def test_xp_history_returns_groups(self) -> None:
         expected = XpHistoryResponse(
@@ -279,7 +288,7 @@ class TestFrontendDataRoutes:
             ]
         )
 
-        async def fake_get_xp_history(self, params):
+        async def fake_get_xp_history(self, current_user, params):
             return expected
 
         with patch.object(
@@ -288,12 +297,12 @@ class TestFrontendDataRoutes:
             fake_get_xp_history,
         ):
             response = self.client.get(
-                "/xp/history",
+                "/api/v1/xp/history",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected.model_dump(mode="json")
+        assert response.json() == expected.model_dump(mode="json", by_alias=True)
 
     def test_achievements_returns_summary(self) -> None:
         expected = AchievementsResponse(
@@ -308,7 +317,7 @@ class TestFrontendDataRoutes:
             summary={"unlocked": 23, "total": 60},
         )
 
-        async def fake_get_achievements(self):
+        async def fake_get_achievements(self, current_user):
             return expected
 
         with patch.object(
@@ -317,12 +326,12 @@ class TestFrontendDataRoutes:
             fake_get_achievements,
         ):
             response = self.client.get(
-                "/achievements",
+                "/api/v1/achievements",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected.model_dump(mode="json")
+        assert response.json() == expected.model_dump(mode="json", by_alias=True)
 
     def test_scan_claim_returns_payload(self) -> None:
         expected = ScanClaimResponse(
@@ -331,7 +340,7 @@ class TestFrontendDataRoutes:
             claimed_at=datetime(2026, 7, 5, 12, 0, tzinfo=UTC),
         )
 
-        async def fake_claim_scan_reward(self, dto):
+        async def fake_claim_scan_reward(self, current_user, dto):
             assert dto.scan_id == "roof-beacon"
             return expected
 
@@ -341,16 +350,16 @@ class TestFrontendDataRoutes:
             fake_claim_scan_reward,
         ):
             response = self.client.post(
-                "/scan/claim",
+                "/api/v1/scan/claim",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
                 json={"scan_id": "roof-beacon"},
             )
 
         assert response.status_code == 200
-        assert response.json() == expected.model_dump(mode="json")
+        assert response.json() == expected.model_dump(mode="json", by_alias=True)
 
     def test_scan_claim_propagates_not_found(self) -> None:
-        async def fake_claim_scan_reward(self, dto):
+        async def fake_claim_scan_reward(self, current_user, dto):
             raise ScanNotFoundError()
 
         with patch.object(
@@ -359,7 +368,7 @@ class TestFrontendDataRoutes:
             fake_claim_scan_reward,
         ):
             response = self.client.post(
-                "/scan/claim",
+                "/api/v1/scan/claim",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
                 json={"scan_id": "missing"},
             )
@@ -368,7 +377,7 @@ class TestFrontendDataRoutes:
         assert response.json()["error"]["code"] == "scan_not_found"
 
     def test_scan_claim_propagates_conflict(self) -> None:
-        async def fake_claim_scan_reward(self, dto):
+        async def fake_claim_scan_reward(self, current_user, dto):
             raise RewardAlreadyClaimedError()
 
         with patch.object(
@@ -377,7 +386,7 @@ class TestFrontendDataRoutes:
             fake_claim_scan_reward,
         ):
             response = self.client.post(
-                "/scan/claim",
+                "/api/v1/scan/claim",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
                 json={"scan_id": "roof-beacon"},
             )
@@ -386,13 +395,14 @@ class TestFrontendDataRoutes:
         assert response.json()["error"]["code"] == "reward_already_claimed"
 
     def test_frontend_data_routes_require_authorization(self) -> None:
+        app.dependency_overrides.clear()
         paths = [
-            ("get", "/app/state"),
-            ("get", "/map/points"),
-            ("get", "/quests"),
-            ("get", "/xp/history"),
-            ("get", "/achievements"),
-            ("post", "/scan/claim"),
+            ("get", "/api/v1/app/state"),
+            ("get", "/api/v1/map/points"),
+            ("get", "/api/v1/quests"),
+            ("get", "/api/v1/xp/history"),
+            ("get", "/api/v1/achievements"),
+            ("post", "/api/v1/scan/claim"),
         ]
 
         for method, path in paths:
@@ -423,12 +433,12 @@ class TestFrontendDataRouteContracts:
     def test_routers_are_registered(self) -> None:
         client = TestClient(app, raise_server_exceptions=False)
 
-        assert client.get("/app/state").status_code == 401
-        assert client.get("/map/points").status_code == 401
-        assert client.get("/quests").status_code == 401
-        assert client.get("/xp/history").status_code == 401
-        assert client.get("/achievements").status_code == 401
+        assert client.get("/api/v1/app/state").status_code == 401
+        assert client.get("/api/v1/map/points").status_code == 401
+        assert client.get("/api/v1/quests").status_code == 401
+        assert client.get("/api/v1/xp/history").status_code == 401
+        assert client.get("/api/v1/achievements").status_code == 401
         assert (
-            client.post("/scan/claim", json={"scan_id": "roof-beacon"}).status_code
+            client.post("/api/v1/scan/claim", json={"scan_id": "roof-beacon"}).status_code
             == 401
         )

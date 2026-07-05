@@ -1,33 +1,34 @@
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.requests import Request
 
+from app.db.models.user import User
 from app.schemas.user import (
     UserPrivacySettingsResponse,
     UserPrivacySettingsUpdateRequest,
 )
-from app.services.business.base_authenticated import AuthenticatedBusinessService
+from app.services.business.base import BusinessService
+from app.services.user import UserService
 
 
-class UserBusinessService(AuthenticatedBusinessService):
+class UserBusinessService(BusinessService):
     def __init__(
         self,
-        request: Request,
         session: AsyncSession | None = None,
     ) -> None:
-        super().__init__(request=request, session=session)
+        super().__init__(session=session)
 
-    async def get_privacy_settings(self) -> UserPrivacySettingsResponse:
-        user = await self.get_current_user()
+    async def get_privacy_settings(self, current_user: User) -> UserPrivacySettingsResponse:
+        user = current_user
 
         return UserPrivacySettingsResponse(privacy=user.is_private)
 
     async def update_privacy_settings(
         self,
+        current_user: User,
         dto: UserPrivacySettingsUpdateRequest,
     ) -> UserPrivacySettingsResponse:
-        user = await self.get_current_user()
+        user = current_user
         updated_user = await self.user_service.update_privacy(
             user,
             is_private=dto.privacy,

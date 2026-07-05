@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
+from app.api.v1.dependencies import CurrentUser
 from app.schemas.profile import ValidationCountResponse
 from app.services.business.profile import ProfileBusinessService
 
@@ -7,5 +8,5 @@ router = APIRouter(prefix="/profile", tags=["Profile"])
 
 
 @router.get("/validations/count", response_model=ValidationCountResponse)
-async def get_validation_count(request: Request):
-    return await ProfileBusinessService(request=request).get_validation_count()
+async def get_validation_count(current_user: CurrentUser):
+    return await ProfileBusinessService().get_validation_count(current_user=current_user)

@@ -10,8 +10,8 @@ from app.services.business.profile import (
 
 class ProfileBusinessServiceTests(IsolatedAsyncioTestCase):
     async def test_returns_cached_validation_count_on_cache_hit(self) -> None:
+        user = SimpleNamespace(id=77)
         service = object.__new__(ProfileBusinessService)
-        service.get_current_user = AsyncMock(return_value=SimpleNamespace(id=77))
         service.validation_service = MagicMock()
         service.validation_service.count_user_validations = AsyncMock()
 
@@ -29,7 +29,7 @@ class ProfileBusinessServiceTests(IsolatedAsyncioTestCase):
             patch("app.services.business.profile.redis_client.get", redis_get),
             patch("app.services.business.profile.redis_client.set", redis_set),
         ):
-            result = await ProfileBusinessService.get_validation_count(service)
+            result = await ProfileBusinessService.get_validation_count(service, user)
 
         self.assertEqual(result.count, 12)
         self.assertEqual(
@@ -40,8 +40,8 @@ class ProfileBusinessServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(redis_set.await_count, 0)
 
     async def test_reads_database_and_warms_cache_on_cache_miss(self) -> None:
+        user = SimpleNamespace(id=77)
         service = object.__new__(ProfileBusinessService)
-        service.get_current_user = AsyncMock(return_value=SimpleNamespace(id=77))
         service.validation_service = MagicMock()
         service.validation_service.count_user_validations = AsyncMock(return_value=12)
 
@@ -59,7 +59,7 @@ class ProfileBusinessServiceTests(IsolatedAsyncioTestCase):
             patch("app.services.business.profile.redis_client.get", redis_get),
             patch("app.services.business.profile.redis_client.set", redis_set),
         ):
-            result = await ProfileBusinessService.get_validation_count(service)
+            result = await ProfileBusinessService.get_validation_count(service, user)
 
         self.assertEqual(result.count, 12)
         service.validation_service.count_user_validations.assert_awaited_once_with(
@@ -72,15 +72,15 @@ class ProfileBusinessServiceTests(IsolatedAsyncioTestCase):
         )
 
     async def test_falls_back_to_database_when_redis_is_unavailable(self) -> None:
+        user = SimpleNamespace(id=77)
         service = object.__new__(ProfileBusinessService)
-        service.get_current_user = AsyncMock(return_value=SimpleNamespace(id=77))
         service.validation_service = MagicMock()
         service.validation_service.count_user_validations = AsyncMock(return_value=7)
 
         redis_fail_open = AsyncMock(side_effect=[None, None])
 
         with patch("app.services.business.profile.redis_fail_open", redis_fail_open):
-            result = await ProfileBusinessService.get_validation_count(service)
+            result = await ProfileBusinessService.get_validation_count(service, user)
 
         self.assertEqual(result.count, 7)
         service.validation_service.count_user_validations.assert_awaited_once_with(

@@ -6,7 +6,6 @@ from decimal import Decimal
 from math import asin, cos, radians, sin, sqrt
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.requests import Request
 
 from app.db.models.achievement import Achievement, UserAchievement
 from app.db.models.enums import Rarity, UIColorToken
@@ -39,7 +38,7 @@ from app.schemas.frontend import (
     XpHistoryResponse,
 )
 from app.services.achievement import AchievementService
-from app.services.business.base_authenticated import AuthenticatedBusinessService
+from app.services.business.base import BusinessService
 from app.services.errors import RewardAlreadyClaimedError, ScanNotFoundError
 from app.services.event import EventService
 from app.services.map_point import MapPointService
@@ -48,7 +47,7 @@ from app.services.user import UserService
 from app.services.xp_event import XpEventService
 
 
-class FrontendDataBusinessService(AuthenticatedBusinessService):
+class FrontendDataBusinessService(BusinessService):
     achievement_service: AchievementService
     event_service: EventService
     map_point_service: MapPointService
@@ -58,13 +57,12 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
 
     def __init__(
         self,
-        request: Request,
         session: AsyncSession | None = None,
     ) -> None:
-        super().__init__(request=request, session=session)
+        super().__init__(session=session)
 
-    async def get_app_state(self) -> FrontendAppStateResponse:
-        user = await self.get_current_user()
+    async def get_app_state(self, current_user: User) -> FrontendAppStateResponse:
+        user = current_user
         quests = await self.quest_service.get_active_quests()
         active_event = await self.event_service.get_active_event()
         map_points = await self.map_point_service.get_active_points()
@@ -112,26 +110,26 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
 
         return FrontendAppStateResponse(
             user=self._build_frontend_user(user),
-            activeEvent=self._build_active_event(active_event),
+            active_event=self._build_active_event(active_event),
             quests=[self._build_quest_card(quest) for quest in quests],
-            recentRewards=[
+            recent_rewards=[
                 self._build_recent_reward(event, map_points_by_id)
                 for event in recent_events
             ],
-            mapPins=map_data["mapPins"],
-            nearbyPoints=map_data["nearbyPoints"],
-            pointDetails=map_data["pointDetails"],
+            map_pins=map_data["map_pins"],
+            nearby_points=map_data["nearby_points"],
+            point_details=map_data["point_details"],
             stats=stats,
-            profileLinks=profile_links,
-            xpHistoryGroups=self._build_xp_history_groups(
+            profile_links=profile_links,
+            xp_history_groups=self._build_xp_history_groups(
                 xp_history_events,
                 map_points_by_id,
             ),
             achievements=achievements,
         )
 
-    async def get_map_points(self, params: MapPointsQueryParams) -> MapPointsResponse:
-        user = await self.get_current_user()
+    async def get_map_points(self, current_user: User, params: MapPointsQueryParams) -> MapPointsResponse:
+        user = current_user
         quests = await self.quest_service.get_active_quests()
         map_points = await self.map_point_service.get_active_points(
             rarity=params.rarity,
@@ -153,16 +151,15 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
 
         return MapPointsResponse(**map_data)
 
-    async def get_quests(self) -> QuestsResponse:
-        await self.get_current_user()
+    async def get_quests(self, current_user: User) -> QuestsResponse:
         quests = await self.quest_service.get_active_quests()
 
         return QuestsResponse(
             items=[self._build_quest_card(quest) for quest in quests]
         )
 
-    async def get_xp_history(self, params: XpHistoryQueryParams) -> XpHistoryResponse:
-        user = await self.get_current_user()
+    async def get_xp_history(self, current_user: User, params: XpHistoryQueryParams) -> XpHistoryResponse:
+        user = current_user
         events = await self.xp_event_service.get_user_history(
             user_id=user.id,
             limit=params.limit,
@@ -176,8 +173,8 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
             groups=self._build_xp_history_groups(events, map_points_by_id)
         )
 
-    async def get_achievements(self) -> AchievementsResponse:
-        user = await self.get_current_user()
+    async def get_achievements(self, current_user: User) -> AchievementsResponse:
+        user = current_user
         states = await self.achievement_service.get_user_achievement_states(
             user_id=user.id
         )
@@ -192,8 +189,8 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
             ),
         )
 
-    async def claim_scan_reward(self, dto: ScanClaimRequest) -> ScanClaimResponse:
-        user = await self.get_current_user()
+    async def claim_scan_reward(self, current_user: User, dto: ScanClaimRequest) -> ScanClaimResponse:
+        user = current_user
         map_point = await self.map_point_service.get_active_point_by_id(dto.scan_id)
         if map_point is None:
             raise ScanNotFoundError()
@@ -304,9 +301,9 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
         }
 
         return {
-            "mapPins": map_pins,
-            "nearbyPoints": nearby_points,
-            "pointDetails": point_details,
+            "map_pins": map_pins,
+            "nearby_points": nearby_points,
+            "point_details": point_details,
         }
 
     @staticmethod
@@ -317,10 +314,10 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
             id=user.public_id or str(user.id),
             rank=user.rank,
             level=user.level,
-            levelProgress=user.level_progress,
+            level_progress=user.level_progress,
             xp=user.xp,
-            nextLevelXp=user.next_level_xp,
-            streakDays=user.streak_days,
+            next_level_xp=user.next_level_xp,
+            streak_days=user.streak_days,
             season=user.season_label or "",
         )
 
@@ -334,8 +331,8 @@ class FrontendDataBusinessService(AuthenticatedBusinessService):
         return ActiveEventResponse(
             rarity=event.rarity,
             title=event.title,
-            xpMultiplier=f"×{self._format_decimal(event.xp_multiplier)} XP",
-            timeLeft=self._format_time_left(time_left),
+            xp_multiplier=f"×{self._format_decimal(event.xp_multiplier)} XP",
+            time_left=self._format_time_left(time_left),
         )
 
     @staticmethod

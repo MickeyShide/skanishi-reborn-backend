@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import routers
+from app.api.runtime import router as runtime_router
+from app.api.v1.router import v1_router
 from app.config import settings
 from app.core.database import check_database, close_database, init_engine
 from app.core.errors import register_error_handlers
@@ -71,8 +72,8 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
 
     # 4. Подключение всех зарегистрированных роутеров приложения
-    for r in routers:
-        app.include_router(r)
+    app.include_router(runtime_router)
+    app.include_router(v1_router)
 
     return app
 

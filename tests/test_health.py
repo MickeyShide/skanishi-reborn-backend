@@ -9,7 +9,7 @@ from app.main import app
 
 class HealthTests(TestCase):
     def test_live_health(self) -> None:
-        response = TestClient(app).get("/health/live")
+        response = TestClient(app).get("/api/v1/health/live")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
@@ -22,7 +22,7 @@ class HealthTests(TestCase):
             patch.object(health, "check_database", check_ok),
             patch.object(health, "check_redis", check_ok),
         ):
-            response = TestClient(app).get("/health/ready")
+            response = TestClient(app).get("/api/v1/health/ready")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -45,7 +45,7 @@ class HealthTests(TestCase):
             patch.object(health, "check_database", check_ok),
             patch.object(health, "check_redis", check_failed),
         ):
-            response = TestClient(app).get("/health/ready")
+            response = TestClient(app).get("/api/v1/health/ready")
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "service_not_ready")

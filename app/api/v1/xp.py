@@ -1,6 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
+
+from app.api.v1.dependencies import CurrentUser
 
 from app.schemas.common import XpHistoryQueryParams
 from app.schemas.frontend import XpHistoryResponse
@@ -11,9 +13,10 @@ router = APIRouter(prefix="/xp", tags=["XP"])
 
 @router.get("/history", response_model=XpHistoryResponse)
 async def get_xp_history(
-    request: Request,
+    current_user: CurrentUser,
     params: Annotated[XpHistoryQueryParams, Depends()],
 ):
-    return await FrontendDataBusinessService(request=request).get_xp_history(
+    return await FrontendDataBusinessService().get_xp_history(
+        current_user=current_user,
         params=params
     )

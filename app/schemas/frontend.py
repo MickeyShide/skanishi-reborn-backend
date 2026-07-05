@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models.enums import Rarity, UIColorToken
 
@@ -11,23 +11,27 @@ from app.db.models.enums import Rarity, UIColorToken
 class FrontendUserResponse(BaseModel):
     """Профиль пользователя для текущего frontend bundle."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str = Field(min_length=1, max_length=160)
     username: str = Field(min_length=1, max_length=64)
     id: str = Field(min_length=1, max_length=64)
     rank: int | None = Field(default=None, ge=1)
     level: int = Field(ge=1)
-    levelProgress: int = Field(ge=0, le=100)
+    level_progress: int = Field(alias="levelProgress", ge=0, le=100)
     xp: int = Field(ge=0)
-    nextLevelXp: int = Field(ge=0)
-    streakDays: int = Field(ge=0)
+    next_level_xp: int = Field(alias="nextLevelXp", ge=0)
+    streak_days: int = Field(alias="streakDays", ge=0)
     season: str = Field(default="")
 
 
 class ActiveEventResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     rarity: Rarity
     title: str = Field(min_length=1, max_length=180)
-    xpMultiplier: str = Field(min_length=1, max_length=32)
-    timeLeft: str = Field(min_length=1, max_length=32)
+    xp_multiplier: str = Field(alias="xpMultiplier", min_length=1, max_length=32)
+    time_left: str = Field(alias="timeLeft", min_length=1, max_length=32)
 
 
 class QuestCardResponse(BaseModel):
@@ -133,22 +137,26 @@ class QuestsResponse(BaseModel):
 
 
 class MapPointsResponse(BaseModel):
-    mapPins: list[MapPinResponse]
-    nearbyPoints: list[NearbyPointResponse]
-    pointDetails: dict[str, PointDetailResponse]
+    model_config = ConfigDict(populate_by_name=True)
+
+    map_pins: list[MapPinResponse] = Field(alias="mapPins")
+    nearby_points: list[NearbyPointResponse] = Field(alias="nearbyPoints")
+    point_details: dict[str, PointDetailResponse] = Field(alias="pointDetails")
 
 
 class FrontendAppStateResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     user: FrontendUserResponse
-    activeEvent: ActiveEventResponse | None = None
+    active_event: ActiveEventResponse | None = Field(default=None, alias="activeEvent")
     quests: list[QuestCardResponse]
-    recentRewards: list[RecentRewardResponse]
-    mapPins: list[MapPinResponse]
-    nearbyPoints: list[NearbyPointResponse]
-    pointDetails: dict[str, PointDetailResponse]
+    recent_rewards: list[RecentRewardResponse] = Field(alias="recentRewards")
+    map_pins: list[MapPinResponse] = Field(alias="mapPins")
+    nearby_points: list[NearbyPointResponse] = Field(alias="nearbyPoints")
+    point_details: dict[str, PointDetailResponse] = Field(alias="pointDetails")
     stats: list[StatCardResponse]
-    profileLinks: list[ProfileLinkResponse]
-    xpHistoryGroups: list[XpHistoryGroupResponse]
+    profile_links: list[ProfileLinkResponse] = Field(alias="profileLinks")
+    xp_history_groups: list[XpHistoryGroupResponse] = Field(alias="xpHistoryGroups")
     achievements: list[AchievementResponse]
 
 
