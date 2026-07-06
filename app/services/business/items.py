@@ -13,7 +13,6 @@ from app.config import settings
 from app.core.redis_client import redis_client, redis_fail_open
 from app.db.models.user import User, UserRole
 from app.db.models.validation import Validation
-from app.db.repositories.errors import ObjectNotFoundError
 from app.db.repositories.item import ItemCatalogRow
 from app.schemas.common import ItemRatingQueryParams, ItemsCatalogQueryParams, PageMeta
 from app.schemas.item import (
@@ -37,19 +36,16 @@ from app.schemas.validation import (
 )
 from app.services.business.base import BusinessService
 from app.services.errors import (
-    InvalidAccessTokenError,
     InvalidSecretTokenError,
     InvalidSecretTypeError,
     ItemNotCollectedError,
     ItemNotFoundError,
     MissingSecretError,
     SecretNotFoundError,
-    UserNotFoundError,
     ValidationConflictError,
 )
 from app.services.item import ItemService
 from app.services.item_secret import ItemSecretService
-from app.services.user import UserService
 from app.services.validation import ValidationService
 
 
@@ -64,7 +60,11 @@ class ItemsBusinessService(BusinessService):
     ) -> None:
         super().__init__(session=session)
 
-    async def get_items(self, current_user: User, params: ItemsCatalogQueryParams) -> ItemsResponse:
+    async def get_items(
+        self,
+        current_user: User,
+        params: ItemsCatalogQueryParams,
+    ) -> ItemsResponse:
 
         rows = await self.item_service.get_active_catalog_page(
             limit=params.limit,
@@ -86,7 +86,11 @@ class ItemsBusinessService(BusinessService):
             ),
         )
 
-    async def get_my_items(self, current_user: User, params: ItemsCatalogQueryParams) -> MyItemsResponse:
+    async def get_my_items(
+        self,
+        current_user: User,
+        params: ItemsCatalogQueryParams,
+    ) -> MyItemsResponse:
 
         rows = await self.item_service.get_active_catalog_page(
             limit=params.limit,
@@ -182,8 +186,10 @@ class ItemsBusinessService(BusinessService):
         except InvalidSecretTokenError:
             raw_secret = dto.token
 
-        hashed_secret = await self.item_secret_service.hash_secret(raw_secret)
-        item_secret = await self.item_secret_service.get_active_by_secret_hash(hashed_secret)
+        hashed_secret = self.item_secret_service.hash_secret(raw_secret)
+        item_secret = await self.item_secret_service.get_active_by_secret_hash(
+            hashed_secret
+        )
         if item_secret is None:
             raise SecretNotFoundError()
 

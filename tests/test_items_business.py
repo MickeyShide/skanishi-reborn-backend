@@ -1,6 +1,5 @@
 import base64
 import time
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -186,13 +185,9 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
             return_value=SimpleNamespace(id=5, item_id=1)
         )
 
-        user_service = MagicMock()
-        user_service.get_user_by_id = AsyncMock(return_value=SimpleNamespace(id=77))
-
         service.item_service = item_service
         service.validation_service = validation_service
         service.item_secret_service = item_secret_service
-        service.user_service = user_service
         redis_fail_open = AsyncMock()
 
         with (
@@ -205,7 +200,6 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
                 "app.services.business.items.ItemSecretService",
                 return_value=item_secret_service,
             ),
-            patch("app.services.business.items.UserService", return_value=user_service),
             patch("app.services.business.items.redis_fail_open", redis_fail_open),
         ):
             result = await ItemsBusinessService.collect_item_by_secret(
@@ -261,13 +255,9 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         item_secret_service.get_active_by_secret_hash = AsyncMock(
             return_value=SimpleNamespace(id=5, item_id=1)
         )
-        user_service = MagicMock()
-        user_service.get_user_by_id = AsyncMock(return_value=SimpleNamespace(id=77))
-
         service.item_service = item_service
         service.validation_service = validation_service
         service.item_secret_service = item_secret_service
-        service.user_service = user_service
         redis_fail_open = AsyncMock()
 
         with (
@@ -280,7 +270,6 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
                 "app.services.business.items.ItemSecretService",
                 return_value=item_secret_service,
             ),
-            patch("app.services.business.items.UserService", return_value=user_service),
             patch("app.services.business.items.redis_fail_open", redis_fail_open),
         ):
             result = await ItemsBusinessService.collect_item_by_secret(

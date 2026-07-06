@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from math import asin, cos, radians, sin, sqrt
 
@@ -36,6 +36,7 @@ from app.schemas.frontend import (
     XpHistoryGroupResponse,
     XpHistoryItemResponse,
     XpHistoryResponse,
+    XpWeekSummaryResponse,
 )
 from app.services.achievement import AchievementService
 from app.services.business.base import BusinessService
@@ -76,6 +77,12 @@ class FrontendDataBusinessService(BusinessService):
             user_id=user.id,
             limit=50,
             offset=0,
+        )
+        week_start, week_end = self._get_current_week_bounds()
+        xp_week_events = await self.xp_event_service.get_user_events_between(
+            user_id=user.id,
+            occurred_at_from=week_start,
+            occurred_at_to=week_end,
         )
         achievement_states = await self.achievement_service.get_user_achievement_states(
             user_id=user.id
@@ -125,10 +132,18 @@ class FrontendDataBusinessService(BusinessService):
                 xp_history_events,
                 map_points_by_id,
             ),
+            xp_weekly=self._build_xp_weekly_summary(
+                xp_week_events,
+                week_start=week_start,
+            ),
             achievements=achievements,
         )
 
-    async def get_map_points(self, current_user: User, params: MapPointsQueryParams) -> MapPointsResponse:
+    async def get_map_points(
+        self,
+        current_user: User,
+        params: MapPointsQueryParams,
+    ) -> MapPointsResponse:
         user = current_user
         quests = await self.quest_service.get_active_quests()
         map_points = await self.map_point_service.get_active_points(
@@ -158,7 +173,11 @@ class FrontendDataBusinessService(BusinessService):
             items=[self._build_quest_card(quest) for quest in quests]
         )
 
-    async def get_xp_history(self, current_user: User, params: XpHistoryQueryParams) -> XpHistoryResponse:
+    async def get_xp_history(
+        self,
+        current_user: User,
+        params: XpHistoryQueryParams,
+    ) -> XpHistoryResponse:
         user = current_user
         events = await self.xp_event_service.get_user_history(
             user_id=user.id,
@@ -166,11 +185,22 @@ class FrontendDataBusinessService(BusinessService):
             offset=params.offset,
             tag=params.tag,
         )
+        week_start, week_end = self._get_current_week_bounds()
+        week_events = await self.xp_event_service.get_user_events_between(
+            user_id=user.id,
+            occurred_at_from=week_start,
+            occurred_at_to=week_end,
+            tag=params.tag,
+        )
         map_points = await self.map_point_service.get_active_points()
         map_points_by_id = {point.id: point for point in map_points}
 
         return XpHistoryResponse(
-            groups=self._build_xp_history_groups(events, map_points_by_id)
+            groups=self._build_xp_history_groups(events, map_points_by_id),
+            weekly=self._build_xp_weekly_summary(
+                week_events,
+                week_start=week_start,
+            ),
         )
 
     async def get_achievements(self, current_user: User) -> AchievementsResponse:
@@ -189,7 +219,11 @@ class FrontendDataBusinessService(BusinessService):
             ),
         )
 
-    async def claim_scan_reward(self, current_user: User, dto: ScanClaimRequest) -> ScanClaimResponse:
+    async def claim_scan_reward(
+        self,
+        current_user: User,
+        dto: ScanClaimRequest,
+    ) -> ScanClaimResponse:
         user = current_user
         map_point = await self.map_point_service.get_active_point_by_id(dto.scan_id)
         if map_point is None:
@@ -464,7 +498,7 @@ class FrontendDataBusinessService(BusinessService):
                 title="Инвентарь",
                 subtitle="Каталог предметов",
                 color=UIColorToken.VIOLET_HI,
-                to="/profile",
+                to="/inventory",
             ),
         ]
 
@@ -505,6 +539,31 @@ class FrontendDataBusinessService(BusinessService):
             )
 
         return groups
+
+    @staticmethod
+    def _get_current_week_bounds() -> tuple[datetime, datetime]:
+        today = datetime.now(UTC).date()
+        week_start_date = today - timedelta(days=today.weekday())
+        week_start = datetime.combine(week_start_date, time.min, tzinfo=UTC)
+
+        return week_start, week_start + timedelta(days=7)
+
+    @staticmethod
+    def _build_xp_weekly_summary(
+        events: list[XpEvent],
+        *,
+        week_start: datetime,
+    ) -> XpWeekSummaryResponse:
+        week_start_date = week_start.astimezone(UTC).date()
+        days = [0] * 7
+
+        for event in events:
+            event_day = event.occurred_at.astimezone(UTC).date()
+            day_index = (event_day - week_start_date).days
+            if 0 <= day_index < 7:
+                days[day_index] += abs(event.xp)
+
+        return XpWeekSummaryResponse(total=sum(days), days=days)
 
     @staticmethod
     def _build_achievements(

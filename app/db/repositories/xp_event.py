@@ -29,6 +29,29 @@ class XpEventRepository(BaseRepository[XpEvent]):
 
         return list(result.scalars().all())
 
+    async def get_user_events_between(
+        self,
+        *,
+        user_id: int,
+        occurred_at_from: datetime,
+        occurred_at_to: datetime,
+        tag: str | None = None,
+    ) -> list[XpEvent]:
+        query = select(XpEvent).where(
+            XpEvent.user_id == user_id,
+            XpEvent.occurred_at >= occurred_at_from,
+            XpEvent.occurred_at < occurred_at_to,
+        )
+
+        if tag is not None:
+            query = query.where(XpEvent.tag == tag)
+
+        query = query.order_by(XpEvent.occurred_at.asc(), XpEvent.id.asc())
+
+        result = await self.session.execute(query)
+
+        return list(result.scalars().all())
+
     async def get_recent_user_events(
         self,
         *,

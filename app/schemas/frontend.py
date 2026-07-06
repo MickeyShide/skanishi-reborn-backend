@@ -110,6 +110,11 @@ class XpHistoryGroupResponse(BaseModel):
     items: list[XpHistoryItemResponse]
 
 
+class XpWeekSummaryResponse(BaseModel):
+    total: int
+    days: list[int] = Field(min_length=7, max_length=7)
+
+
 class AchievementResponse(BaseModel):
     icon: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=128)
@@ -130,6 +135,9 @@ class AchievementsResponse(BaseModel):
 
 class XpHistoryResponse(BaseModel):
     groups: list[XpHistoryGroupResponse]
+    weekly: XpWeekSummaryResponse = Field(
+        default_factory=lambda: XpWeekSummaryResponse(total=0, days=[0] * 7)
+    )
 
 
 class QuestsResponse(BaseModel):
@@ -157,6 +165,10 @@ class FrontendAppStateResponse(BaseModel):
     stats: list[StatCardResponse]
     profile_links: list[ProfileLinkResponse] = Field(alias="profileLinks")
     xp_history_groups: list[XpHistoryGroupResponse] = Field(alias="xpHistoryGroups")
+    xp_weekly: XpWeekSummaryResponse = Field(
+        default_factory=lambda: XpWeekSummaryResponse(total=0, days=[0] * 7),
+        alias="xpWeekly",
+    )
     achievements: list[AchievementResponse]
 
 

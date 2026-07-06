@@ -1,11 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
 from app.db.models.enums import Rarity, UIColorToken
-from app.schemas.common import MapPointsQueryParams
+from app.schemas.common import MapPointsQueryParams, XpHistoryQueryParams
 from app.schemas.frontend import ScanClaimRequest
 from app.services.business.frontend_data import FrontendDataBusinessService
 from app.services.errors import RewardAlreadyClaimedError
@@ -87,6 +87,59 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual([point.id for point in result.nearby_points], ["near-point"])
         self.assertEqual(result.nearby_points[0].distance, "44 м")
         self.assertEqual(result.point_details["near-point"].status, "Не пройдено")
+
+    async def test_get_xp_history_returns_weekly_summary_for_filter(self) -> None:
+        user = SimpleNamespace(id=77)
+        service = object.__new__(FrontendDataBusinessService)
+        week_start, week_end = FrontendDataBusinessService._get_current_week_bounds()
+        history_event = SimpleNamespace(
+            id=1,
+            source="bonus:daily",
+            tag="BONUS",
+            xp=50,
+            multiplier=None,
+            color=UIColorToken.GOLD,
+            occurred_at=week_start + timedelta(days=1, hours=10),
+        )
+        penalty_event = SimpleNamespace(
+            id=2,
+            source="bonus:refund",
+            tag="BONUS",
+            xp=-20,
+            multiplier=None,
+            color=UIColorToken.PINK,
+            occurred_at=week_start + timedelta(days=1, hours=11),
+        )
+        service.xp_event_service = MagicMock()
+        service.xp_event_service.get_user_history = AsyncMock(
+            return_value=[history_event]
+        )
+        service.xp_event_service.get_user_events_between = AsyncMock(
+            return_value=[history_event, penalty_event]
+        )
+        service.map_point_service = MagicMock()
+        service.map_point_service.get_active_points = AsyncMock(return_value=[])
+
+        result = await FrontendDataBusinessService.get_xp_history(
+            service,
+            user,
+            XpHistoryQueryParams(tag="BONUS"),
+        )
+
+        self.assertEqual(result.weekly.days, [0, 70, 0, 0, 0, 0, 0])
+        self.assertEqual(result.weekly.total, 70)
+        service.xp_event_service.get_user_history.assert_awaited_once_with(
+            user_id=77,
+            limit=50,
+            offset=0,
+            tag="BONUS",
+        )
+        service.xp_event_service.get_user_events_between.assert_awaited_once_with(
+            user_id=77,
+            occurred_at_from=week_start,
+            occurred_at_to=week_end,
+            tag="BONUS",
+        )
 
     async def test_claim_scan_reward_creates_event_and_returns_updated_user(
         self,

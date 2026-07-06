@@ -73,6 +73,21 @@ class XpEventService(BaseService):
             tag=tag,
         )
 
+    async def get_user_events_between(
+        self,
+        *,
+        user_id: int,
+        occurred_at_from: datetime,
+        occurred_at_to: datetime,
+        tag: str | None = None,
+    ) -> list[XpEvent]:
+        return await self.xp_event_repository.get_user_events_between(
+            user_id=user_id,
+            occurred_at_from=occurred_at_from,
+            occurred_at_to=occurred_at_to,
+            tag=tag,
+        )
+
     async def sum_user_xp_since(
         self,
         *,
