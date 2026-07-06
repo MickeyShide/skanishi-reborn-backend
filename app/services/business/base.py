@@ -25,7 +25,14 @@ class _LazyServiceProxy:
         self._attr_name = attr_name
         self._service_cls = service_cls
 
-    def __getattr__(self, method_name: str) -> Callable[..., Awaitable[Any]]:
+    def __getattr__(self, method_name: str) -> Any:
+        try:
+            attr = inspect.getattr_static(self._service_cls, method_name)
+            if isinstance(attr, (staticmethod, classmethod)):
+                return attr.__get__(None, self._service_cls)
+        except AttributeError:
+            pass
+
         async def call(*args: Any, **kwargs: Any) -> Any:
             service = await self._business_service._get_service(
                 self._attr_name,
