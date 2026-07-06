@@ -9,6 +9,7 @@ COPY pyproject.toml ./
 COPY alembic.ini ./
 COPY app ./app
 COPY migrations ./migrations
+COPY seed.py ./
 
 RUN pip install --no-cache-dir .
 
