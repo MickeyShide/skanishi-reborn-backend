@@ -182,9 +182,8 @@ class ItemsBusinessService(BusinessService):
         except InvalidSecretTokenError:
             raw_secret = dto.token
 
-        item_secret = await self.item_secret_service.get_active_by_secret_hash(
-            self.item_secret_service.hash_secret(raw_secret)
-        )
+        hashed_secret = await self.item_secret_service.hash_secret(raw_secret)
+        item_secret = await self.item_secret_service.get_active_by_secret_hash(hashed_secret)
         if item_secret is None:
             raise SecretNotFoundError()
 
