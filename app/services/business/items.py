@@ -176,10 +176,14 @@ class ItemsBusinessService(BusinessService):
         current_user: User,
         dto: SecretValidationRequest,
     ) -> ValidationResponse:
-        claims = self._decode_item_secret_token(dto.token)
+        try:
+            claims = self._decode_item_secret_token(dto.token)
+            raw_secret = claims.secret
+        except InvalidSecretTokenError:
+            raw_secret = dto.token
 
         item_secret = await self.item_secret_service.get_active_by_secret_hash(
-            self.item_secret_service.hash_secret(claims.secret)
+            self.item_secret_service.hash_secret(raw_secret)
         )
         if item_secret is None:
             raise SecretNotFoundError()

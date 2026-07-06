@@ -10,7 +10,7 @@ from app.schemas.user import UserPublic
 type SecretToken = Annotated[
     str,
     StringConstraints(
-        min_length=16,
+        min_length=8,
         max_length=4096,
         strip_whitespace=True,
         pattern=r"^[A-Za-z0-9_\-.]+$",
