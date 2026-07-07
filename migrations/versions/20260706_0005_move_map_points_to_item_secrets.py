@@ -124,8 +124,20 @@ def upgrade() -> None:
         """
         UPDATE item_secrets
         SET
-            latitude = trim(split_part(coords, ',', 1))::numeric,
-            longitude = trim(split_part(coords, ',', 2))::numeric
+            latitude = CASE 
+                WHEN trim(split_part(coords, ',', 1))::numeric BETWEEN -90 AND 90 
+                THEN trim(split_part(coords, ',', 1))::numeric 
+                WHEN trim(split_part(coords, ',', 2))::numeric BETWEEN -90 AND 90
+                THEN trim(split_part(coords, ',', 2))::numeric
+                ELSE NULL
+            END,
+            longitude = CASE 
+                WHEN trim(split_part(coords, ',', 1))::numeric BETWEEN -90 AND 90 
+                THEN trim(split_part(coords, ',', 2))::numeric 
+                WHEN trim(split_part(coords, ',', 2))::numeric BETWEEN -90 AND 90
+                THEN trim(split_part(coords, ',', 1))::numeric
+                ELSE NULL
+            END
         WHERE coords ~ '^\\s*-?[0-9]+(\\.[0-9]+)?\\s*,\\s*-?[0-9]+(\\.[0-9]+)?\\s*$'
         """
     )

@@ -22,7 +22,7 @@ class OutboxEvent(BaseSQLModel, table=True):
 
     event_type: str = Field(nullable=False)
     payload: dict[str, Any] = Field(
-        default_factory=dict, sa_column=Column(JSONB), nullable=False
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
     )
     status: OutboxEventStatus = Field(
         sa_type=SAEnum(OutboxEventStatus, name="outboxeventstatus"),

@@ -476,7 +476,9 @@ class FrontendDataBusinessService(BusinessService):
         user_id: int,
         is_opened: bool,
     ) -> tuple[float, float]:
-        exact_coords = (float(secret.latitude), float(secret.longitude))
+        lat = float(secret.latitude) if secret.latitude is not None else 0.0
+        lon = float(secret.longitude) if secret.longitude is not None else 0.0
+        exact_coords = (lat, lon)
         if not self._is_secret_masked(secret, is_opened):
             return exact_coords
 
