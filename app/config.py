@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     REDIS_URL: RedisDsn
 
+    CELERY_BROKER_URL: str
+
     SECRET_KEY: str = Field(min_length=32)
     JWT_ALGORITHM: str = Field(min_length=1)
     ACCESS_TOKEN_TTL_SECONDS: int = Field(gt=0)

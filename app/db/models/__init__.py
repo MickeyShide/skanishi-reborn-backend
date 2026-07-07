@@ -9,6 +9,7 @@ from app.db.models.item_type import ItemType
 from app.db.models.prototype import Prototype
 from app.db.models.quest import Quest
 from app.db.models.refresh_session import RefreshSession
+from app.db.models.system_events import OutboxEvent, ProcessedEvent
 from app.db.models.user import User, UserRole
 from app.db.models.validation import Validation
 from app.db.models.xp_event import XpEvent
@@ -21,6 +22,8 @@ __all__ = [
     "ItemImage",
     "ItemSecret",
     "ItemType",
+    "OutboxEvent",
+    "ProcessedEvent",
     "Prototype",
     "Quest",
     "Rarity",

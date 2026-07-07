@@ -1,4 +1,5 @@
 # app/services/user.py
+# app/services/user.py
 
 from __future__ import annotations
 
@@ -6,6 +7,22 @@ from app.db.models.user import User, UserRole
 from app.db.repositories.user import UserRepository
 from app.services.base import BaseService
 from app.services.init_data import TelegramUserData
+
+LEVEL_THRESHOLDS = {
+    1: 1000,
+    2: 2500,
+    3: 5000,
+    4: 10000,
+    5: 20000,
+    6: 35000,
+    7: 50000,
+    8: 75000,
+    9: 100000,
+    10: 150000,
+}
+
+def get_next_level_xp(level: int) -> int:
+    return LEVEL_THRESHOLDS.get(level, level * 15000 + 1000)
 
 
 class UserService(BaseService):
@@ -81,18 +98,23 @@ class UserService(BaseService):
         *,
         reward_xp: int,
     ) -> User:
-        next_level_xp = max(user.next_level_xp, 0)
-        new_xp = user.xp + reward_xp
+        return await self.add_xp_and_check_level_up(user, reward_xp)
 
-        if next_level_xp > 0:
-            clamped_xp = min(new_xp, next_level_xp)
-            level_progress = min(100, int((clamped_xp / next_level_xp) * 100))
-        else:
-            clamped_xp = new_xp
-            level_progress = 0
+    async def add_xp_and_check_level_up(self, user: User, added_xp: int) -> User:
+        new_xp = user.xp + added_xp
+        new_level = user.level
+        next_level_xp = user.next_level_xp or get_next_level_xp(new_level)
+
+        while new_xp >= next_level_xp:
+            new_level += 1
+            next_level_xp = get_next_level_xp(new_level)
+
+        level_progress = min(100, int((new_xp / next_level_xp) * 100)) if next_level_xp > 0 else 0
 
         return await self.user_repository.update(
             user,
-            xp=clamped_xp,
+            xp=new_xp,
+            level=new_level,
+            next_level_xp=next_level_xp,
             level_progress=level_progress,
         )

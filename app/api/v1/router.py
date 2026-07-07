@@ -9,6 +9,7 @@ from app.api.v1.map import router as map_router
 from app.api.v1.profile import router as profile_router
 from app.api.v1.quest import router as quest_router
 from app.api.v1.scan import router as scan_router
+from app.api.v1.stream import router as stream_router
 from app.api.v1.user import router as user_router
 from app.api.v1.xp import router as xp_router
 
@@ -25,3 +26,4 @@ v1_router.include_router(quest_router)
 v1_router.include_router(xp_router)
 v1_router.include_router(achievement_router)
 v1_router.include_router(scan_router)
+v1_router.include_router(stream_router)

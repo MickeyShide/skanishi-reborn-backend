@@ -234,6 +234,23 @@ class FrontendDataBusinessService(BusinessService):
         dto: ScanClaimRequest,
     ) -> ScanClaimResponse:
         user = current_user
+        
+        # 0. Anti-Fraud & Rate Limiting
+        from app.core.redis_client import get_redis_client
+        redis = await get_redis_client()
+        rate_limit_key = f"rate_limit:scan:{user.id}"
+        
+        # Atomically increment and set TTL using Redis Pipeline
+        async with redis.pipeline(transaction=True) as pipe:
+            await pipe.incr(rate_limit_key)
+            await pipe.expire(rate_limit_key, 5) # 5 seconds window
+            results = await pipe.execute()
+            
+        requests_in_window = results[0]
+        if requests_in_window > 1:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=429, detail="Слишком частые запросы на сканирование. Подождите 5 секунд.")
+        
         secret_id = self._parse_secret_id(dto.scan_id)
         if secret_id is None:
             raise ScanNotFoundError()
@@ -253,10 +270,8 @@ class FrontendDataBusinessService(BusinessService):
             raise RewardAlreadyClaimedError()
 
         claimed_at = datetime.now(UTC)
-        updated_user = await self.user_service.apply_scan_reward(
-            user,
-            reward_xp=item_secret.reward_xp,
-        )
+        
+        # 1. Create XpEvent to lock the claim and prevent duplicates
         await self.xp_event_service.create_scan_claim_event(
             user_id=user.id,
             scan_id=str(item_secret.id),
@@ -264,11 +279,33 @@ class FrontendDataBusinessService(BusinessService):
             occurred_at=claimed_at,
             color=self._get_color_for_rarity(item_secret.rarity),
         )
-        self.user = updated_user
+
+        # 2. Write Outbox event for Celery to process
+        from app.db.models.system_events import OutboxEvent
+        from app.core.logger import request_id_ctx
+        
+        outbox_event = OutboxEvent(
+            event_type="scan_claimed",
+            payload={
+                "event_id": f"scan_{user.id}_{item_secret.id}",
+                "user_id": user.id,
+                "scan_id": str(item_secret.id),
+                "reward_xp": item_secret.reward_xp,
+                "rarity": item_secret.rarity.value if hasattr(item_secret.rarity, "value") else item_secret.rarity,
+                "claimed_at": claimed_at.isoformat(),
+                "request_id": request_id_ctx.get(),
+            }
+        )
+        self.session.add(outbox_event)
+        await self.session.commit()
+        
+        # Predict the frontend response so UI updates immediately
+        frontend_user = self._build_frontend_user(user)
+        frontend_user.xp += item_secret.reward_xp
 
         return ScanClaimResponse(
             xp=item_secret.reward_xp,
-            user=self._build_frontend_user(updated_user),
+            user=frontend_user,
             claimed_at=claimed_at,
         )
 
