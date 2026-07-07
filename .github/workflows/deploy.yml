@@ -82,6 +82,8 @@ jobs:
           POSTGRES_USER=${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD=${{ vars.POSTGRES_PASSWORD }}
           CELERY_BROKER_URL=${{ vars.CELERY_BROKER_URL }}
+          RABBITMQ_PORT=${{ secrets.RABBITMQ_PORT }}
+          RABBITMQ_MANAGEMENT_PORT=${{ secrets.RABBITMQ_MANAGEMENT_PORT }}
           EOF
 
       - name: Configure SSH
