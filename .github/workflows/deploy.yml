@@ -81,6 +81,7 @@ jobs:
           POSTGRES_DB=${{ vars.POSTGRES_DB }}
           POSTGRES_USER=${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD=${{ vars.POSTGRES_PASSWORD }}
+          CELERY_BROKER_URL=${{ vars.CELERY_BROKER_URL }}
           EOF
 
       - name: Configure SSH
