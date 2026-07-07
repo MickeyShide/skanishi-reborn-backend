@@ -7,7 +7,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.redis_client import redis_client
 from app.db.models.user import User
-from app.api.dependencies.auth import get_current_user
+from app.api.v1.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
