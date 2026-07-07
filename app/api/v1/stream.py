@@ -5,7 +5,7 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.redis_client import get_redis_client
+from app.core.redis_client import redis_client
 from app.db.models.user import User
 from app.api.dependencies.auth import get_current_user
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stream", tags=["stream"])
 
 async def event_generator(request: Request, user_id: int) -> AsyncGenerator[dict, None]:
-    redis = await get_redis_client()
+    redis = redis_client
     pubsub = redis.pubsub()
     channel = f"user_events:{user_id}"
     await pubsub.subscribe(channel)
