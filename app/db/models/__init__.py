@@ -6,7 +6,6 @@ from app.db.models.item import Item
 from app.db.models.item_image import ItemImage
 from app.db.models.item_secrets import ItemSecret
 from app.db.models.item_type import ItemType
-from app.db.models.map_point import MapPoint
 from app.db.models.prototype import Prototype
 from app.db.models.quest import Quest
 from app.db.models.refresh_session import RefreshSession
@@ -22,7 +21,6 @@ __all__ = [
     "ItemImage",
     "ItemSecret",
     "ItemType",
-    "MapPoint",
     "Prototype",
     "Quest",
     "Rarity",

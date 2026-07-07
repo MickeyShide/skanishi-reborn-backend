@@ -31,3 +31,14 @@ class ItemSecretService(BaseService):
             return None
 
         return item_secret
+
+    async def get_active_map_secrets(self) -> list[ItemSecret]:
+        return await self.item_secret_repository.get_active_map_secrets()
+
+    async def get_active_map_secret_by_id(
+        self,
+        secret_id: int,
+    ) -> ItemSecret | None:
+        return await self.item_secret_repository.get_active_map_secret_by_id(
+            secret_id
+        )

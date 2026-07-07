@@ -21,6 +21,17 @@ class ValidationService(BaseService):
             item_ids=item_ids,
         )
 
+    async def get_user_item_secret_ids(
+        self,
+        *,
+        user_id: int,
+        item_secret_ids: list[int],
+    ) -> set[int]:
+        return await self.validation_repository.get_user_item_secret_ids(
+            user_id=user_id,
+            item_secret_ids=item_secret_ids,
+        )
+
     async def get_user_item_validation(
         self,
         *,
@@ -30,6 +41,17 @@ class ValidationService(BaseService):
         return await self.validation_repository.get_user_item_validation(
             user_id=user_id,
             item_id=item_id,
+        )
+
+    async def get_user_item_secret_validation(
+        self,
+        *,
+        user_id: int,
+        item_secret_id: int,
+    ) -> Validation | None:
+        return await self.validation_repository.get_user_item_secret_validation(
+            user_id=user_id,
+            item_secret_id=item_secret_id,
         )
 
     async def get_item_rating_page(

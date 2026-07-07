@@ -28,6 +28,24 @@ class ValidationRepository(BaseRepository[Validation]):
 
         return set(result.scalars().all())
 
+    async def get_user_item_secret_ids(
+        self,
+        *,
+        user_id: int,
+        item_secret_ids: list[int],
+    ) -> set[int]:
+        if not item_secret_ids:
+            return set()
+
+        query = select(Validation.item_secret_id).where(
+            Validation.user_id == user_id,
+            Validation.item_secret_id.in_(item_secret_ids),
+        )
+
+        result = await self.session.execute(query)
+
+        return set(result.scalars().all())
+
     async def get_user_item_validation(
         self,
         *,
@@ -39,6 +57,25 @@ class ValidationRepository(BaseRepository[Validation]):
             .where(
                 Validation.user_id == user_id,
                 Validation.item_id == item_id,
+            )
+            .limit(1)
+        )
+
+        result = await self.session.execute(query)
+
+        return result.scalar_one_or_none()
+
+    async def get_user_item_secret_validation(
+        self,
+        *,
+        user_id: int,
+        item_secret_id: int,
+    ) -> Validation | None:
+        query = (
+            select(Validation)
+            .where(
+                Validation.user_id == user_id,
+                Validation.item_secret_id == item_secret_id,
             )
             .limit(1)
         )

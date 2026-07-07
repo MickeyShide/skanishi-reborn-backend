@@ -3,14 +3,15 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from math import asin, cos, radians, sin, sqrt
+from hashlib import sha256
+from math import asin, cos, pi, radians, sin, sqrt
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.achievement import Achievement, UserAchievement
 from app.db.models.enums import Rarity, UIColorToken
 from app.db.models.event import Event
-from app.db.models.map_point import MapPoint
+from app.db.models.item_secrets import ItemSecret
 from app.db.models.quest import Quest
 from app.db.models.user import User
 from app.db.models.xp_event import XpEvent
@@ -42,18 +43,20 @@ from app.services.achievement import AchievementService
 from app.services.business.base import BusinessService
 from app.services.errors import RewardAlreadyClaimedError, ScanNotFoundError
 from app.services.event import EventService
-from app.services.map_point import MapPointService
+from app.services.item_secret import ItemSecretService
 from app.services.quest import QuestService
 from app.services.user import UserService
+from app.services.validation import ValidationService
 from app.services.xp_event import XpEventService
 
 
 class FrontendDataBusinessService(BusinessService):
     achievement_service: AchievementService
     event_service: EventService
-    map_point_service: MapPointService
+    item_secret_service: ItemSecretService
     quest_service: QuestService
     user_service: UserService
+    validation_service: ValidationService
     xp_event_service: XpEventService
 
     def __init__(
@@ -66,9 +69,12 @@ class FrontendDataBusinessService(BusinessService):
         user = current_user
         quests = await self.quest_service.get_active_quests()
         active_event = await self.event_service.get_active_event()
-        map_points = await self.map_point_service.get_active_points()
-        map_points_by_id = {point.id: point for point in map_points}
-        claimed_ids = await self._get_claimed_scan_ids(user.id, list(map_points_by_id))
+        map_secrets = await self.item_secret_service.get_active_map_secrets()
+        map_secrets_by_id = {str(secret.id): secret for secret in map_secrets}
+        opened_ids = await self._get_opened_secret_ids(
+            user.id,
+            [secret.id for secret in map_secrets],
+        )
         recent_events = await self.xp_event_service.get_recent_user_events(
             user_id=user.id,
             limit=3,
@@ -93,19 +99,22 @@ class FrontendDataBusinessService(BusinessService):
         )
 
         map_data = self._build_map_data(
-            map_points=map_points,
-            claimed_ids=claimed_ids,
+            map_secrets=map_secrets,
+            opened_ids=opened_ids,
             quest_lookup=self._build_quest_lookup(quests),
+            user_id=user.id,
             lat=None,
             lon=None,
             radius_meters=1000,
+            rarity=None,
+            category=None,
             done=None,
         )
         achievements = self._build_achievements(achievement_states)
         unlocked_count = sum(1 for achievement in achievements if achievement.unlocked)
         stats = self._build_stats(
             scan_count=scan_count,
-            point_count=len(map_points),
+            point_count=len(map_secrets),
             quest_count=len(quests),
             achievement_count=unlocked_count,
         )
@@ -120,7 +129,7 @@ class FrontendDataBusinessService(BusinessService):
             active_event=self._build_active_event(active_event),
             quests=[self._build_quest_card(quest) for quest in quests],
             recent_rewards=[
-                self._build_recent_reward(event, map_points_by_id)
+                self._build_recent_reward(event, map_secrets_by_id)
                 for event in recent_events
             ],
             map_pins=map_data["map_pins"],
@@ -130,7 +139,7 @@ class FrontendDataBusinessService(BusinessService):
             profile_links=profile_links,
             xp_history_groups=self._build_xp_history_groups(
                 xp_history_events,
-                map_points_by_id,
+                map_secrets_by_id,
             ),
             xp_weekly=self._build_xp_weekly_summary(
                 xp_week_events,
@@ -146,21 +155,21 @@ class FrontendDataBusinessService(BusinessService):
     ) -> MapPointsResponse:
         user = current_user
         quests = await self.quest_service.get_active_quests()
-        map_points = await self.map_point_service.get_active_points(
-            rarity=params.rarity,
-            category=params.category,
-        )
-        claimed_ids = await self._get_claimed_scan_ids(
+        map_secrets = await self.item_secret_service.get_active_map_secrets()
+        opened_ids = await self._get_opened_secret_ids(
             user.id,
-            [point.id for point in map_points],
+            [secret.id for secret in map_secrets],
         )
         map_data = self._build_map_data(
-            map_points=map_points,
-            claimed_ids=claimed_ids,
+            map_secrets=map_secrets,
+            opened_ids=opened_ids,
             quest_lookup=self._build_quest_lookup(quests),
+            user_id=user.id,
             lat=params.lat,
             lon=params.lon,
             radius_meters=params.radius_meters,
+            rarity=params.rarity,
+            category=params.category,
             done=params.done,
         )
 
@@ -192,11 +201,11 @@ class FrontendDataBusinessService(BusinessService):
             occurred_at_to=week_end,
             tag=params.tag,
         )
-        map_points = await self.map_point_service.get_active_points()
-        map_points_by_id = {point.id: point for point in map_points}
+        map_secrets = await self.item_secret_service.get_active_map_secrets()
+        map_secrets_by_id = {str(secret.id): secret for secret in map_secrets}
 
         return XpHistoryResponse(
-            groups=self._build_xp_history_groups(events, map_points_by_id),
+            groups=self._build_xp_history_groups(events, map_secrets_by_id),
             weekly=self._build_xp_weekly_summary(
                 week_events,
                 week_start=week_start,
@@ -225,11 +234,17 @@ class FrontendDataBusinessService(BusinessService):
         dto: ScanClaimRequest,
     ) -> ScanClaimResponse:
         user = current_user
-        map_point = await self.map_point_service.get_active_point_by_id(dto.scan_id)
-        if map_point is None:
+        secret_id = self._parse_secret_id(dto.scan_id)
+        if secret_id is None:
             raise ScanNotFoundError()
 
-        source = self.xp_event_service.build_scan_source(dto.scan_id)
+        item_secret = await self.item_secret_service.get_active_map_secret_by_id(
+            secret_id
+        )
+        if item_secret is None:
+            raise ScanNotFoundError()
+
+        source = self.xp_event_service.build_scan_source(str(item_secret.id))
         existing_event = await self.xp_event_service.get_user_event_by_source(
             user_id=user.id,
             source=source,
@@ -240,66 +255,77 @@ class FrontendDataBusinessService(BusinessService):
         claimed_at = datetime.now(UTC)
         updated_user = await self.user_service.apply_scan_reward(
             user,
-            reward_xp=map_point.reward_xp,
+            reward_xp=item_secret.reward_xp,
         )
         await self.xp_event_service.create_scan_claim_event(
             user_id=user.id,
-            scan_id=dto.scan_id,
-            reward_xp=map_point.reward_xp,
+            scan_id=str(item_secret.id),
+            reward_xp=item_secret.reward_xp,
             occurred_at=claimed_at,
-            color=self._get_color_for_rarity(map_point.rarity),
+            color=self._get_color_for_rarity(item_secret.rarity),
         )
         self.user = updated_user
 
         return ScanClaimResponse(
-            xp=map_point.reward_xp,
+            xp=item_secret.reward_xp,
             user=self._build_frontend_user(updated_user),
             claimed_at=claimed_at,
         )
 
-    async def _get_claimed_scan_ids(
+    async def _get_opened_secret_ids(
         self,
         user_id: int,
-        point_ids: list[str],
+        secret_ids: list[int],
     ) -> set[str]:
-        sources = [
-            self.xp_event_service.build_scan_source(point_id)
-            for point_id in point_ids
-        ]
-        claimed_sources = await self.xp_event_service.get_user_claimed_scan_sources(
+        opened_ids = await self.validation_service.get_user_item_secret_ids(
             user_id=user_id,
-            sources=sources,
+            item_secret_ids=secret_ids,
         )
 
-        return {
-            source.removeprefix("scan:")
-            for source in claimed_sources
-            if source.startswith("scan:")
-        }
+        return {str(secret_id) for secret_id in opened_ids}
 
     def _build_map_data(
         self,
         *,
-        map_points: list[MapPoint],
-        claimed_ids: set[str],
+        map_secrets: list[ItemSecret],
+        opened_ids: set[str],
         quest_lookup: dict[str, str],
+        user_id: int,
         lat: float | None,
         lon: float | None,
         radius_meters: int,
+        rarity: Rarity | None,
+        category: str | None,
         done: bool | None,
     ) -> dict[str, object]:
-        points_with_distance = []
-        for point in map_points:
-            is_done = point.id in claimed_ids
-            if done is not None and is_done is not done:
+        secrets_with_distance = []
+        for secret in map_secrets:
+            secret_id = self._secret_public_id(secret)
+            is_opened = secret_id in opened_ids
+            is_masked = self._is_secret_masked(secret, is_opened)
+
+            if not self._matches_map_filters(
+                secret,
+                is_masked=is_masked,
+                rarity=rarity,
+                category=category,
+            ):
                 continue
 
+            if done is not None and is_opened is not done:
+                continue
+
+            coords = self._get_public_secret_coords(
+                secret,
+                user_id=user_id,
+                is_opened=is_opened,
+            )
             distance_meters = (
                 self._distance_meters(
                     lat,
                     lon,
-                    float(point.latitude),
-                    float(point.longitude),
+                    coords[0],
+                    coords[1],
                 )
                 if lat is not None and lon is not None
                 else None
@@ -307,31 +333,50 @@ class FrontendDataBusinessService(BusinessService):
             if distance_meters is not None and distance_meters > radius_meters:
                 continue
 
-            points_with_distance.append((point, is_done, distance_meters))
+            secrets_with_distance.append(
+                (secret, is_opened, is_masked, coords, distance_meters)
+            )
 
         if lat is not None and lon is not None:
-            points_with_distance.sort(
+            secrets_with_distance.sort(
                 key=lambda row: (
-                    row[2] if row[2] is not None else float("inf"),
-                    row[0].name,
+                    row[4] if row[4] is not None else float("inf"),
+                    row[0].title,
                 )
             )
         else:
-            points_with_distance.sort(key=lambda row: row[0].name)
+            secrets_with_distance.sort(key=lambda row: row[0].title)
 
-        map_pins = [self._build_map_pin(point) for point, _, _ in points_with_distance]
+        map_pins = [
+            self._build_map_pin(
+                secret,
+                is_opened=is_opened,
+                is_masked=is_masked,
+                coords=coords,
+            )
+            for secret, is_opened, is_masked, coords, _ in secrets_with_distance
+        ]
         nearby_points = [
-            self._build_nearby_point(point, is_done, distance_meters)
-            for point, is_done, distance_meters in points_with_distance
+            self._build_nearby_point(
+                secret,
+                is_opened=is_opened,
+                is_masked=is_masked,
+                coords=coords,
+                distance_meters=distance_meters,
+            )
+            for secret, is_opened, is_masked, coords, distance_meters
+            in secrets_with_distance
         ]
         point_details = {
-            point.id: self._build_point_detail(
-                point=point,
-                is_done=is_done,
+            self._secret_public_id(secret): self._build_point_detail(
+                secret=secret,
+                is_opened=is_opened,
+                is_masked=is_masked,
                 distance_meters=distance_meters,
                 quest_lookup=quest_lookup,
             )
-            for point, is_done, distance_meters in points_with_distance
+            for secret, is_opened, is_masked, _, distance_meters
+            in secrets_with_distance
         }
 
         return {
@@ -339,6 +384,96 @@ class FrontendDataBusinessService(BusinessService):
             "nearby_points": nearby_points,
             "point_details": point_details,
         }
+
+    @staticmethod
+    def _secret_public_id(secret: ItemSecret) -> str:
+        return str(secret.id)
+
+    @staticmethod
+    def _parse_secret_id(raw_secret_id: str) -> int | None:
+        try:
+            secret_id = int(raw_secret_id)
+        except (TypeError, ValueError):
+            return None
+
+        return secret_id if secret_id > 0 else None
+
+    @staticmethod
+    def _is_secret_masked(secret: ItemSecret, is_opened: bool) -> bool:
+        return secret.hidden and not is_opened
+
+    @staticmethod
+    def _matches_map_filters(
+        secret: ItemSecret,
+        *,
+        is_masked: bool,
+        rarity: Rarity | None,
+        category: str | None,
+    ) -> bool:
+        if is_masked:
+            if rarity is not None:
+                return False
+            return category is None or category == "Секрет"
+
+        if rarity is not None and secret.rarity != rarity:
+            return False
+
+        return category is None or secret.category == category
+
+    @staticmethod
+    def _get_public_secret_name(secret: ItemSecret, *, is_masked: bool) -> str:
+        return "Скрытый секрет" if is_masked else secret.title
+
+    @staticmethod
+    def _get_public_secret_category(secret: ItemSecret, *, is_masked: bool) -> str:
+        return "Секрет" if is_masked else secret.category
+
+    @staticmethod
+    def _get_public_secret_rarity(secret: ItemSecret, *, is_masked: bool) -> Rarity:
+        return Rarity.COMMON if is_masked else secret.rarity
+
+    def _get_public_secret_coords(
+        self,
+        secret: ItemSecret,
+        *,
+        user_id: int,
+        is_opened: bool,
+    ) -> tuple[float, float]:
+        exact_coords = (float(secret.latitude), float(secret.longitude))
+        if not self._is_secret_masked(secret, is_opened):
+            return exact_coords
+
+        return self._get_stable_nearby_coords(
+            exact_coords,
+            seed=f"{user_id}:{secret.id}:hidden-map-offset",
+            max_distance_meters=100,
+        )
+
+    @staticmethod
+    def _get_stable_nearby_coords(
+        coords: tuple[float, float],
+        *,
+        seed: str,
+        max_distance_meters: int,
+    ) -> tuple[float, float]:
+        latitude, longitude = coords
+        digest = sha256(seed.encode("utf-8")).digest()
+        angle_unit = int.from_bytes(digest[:8], "big") / 2**64
+        radius_unit = int.from_bytes(digest[8:16], "big") / 2**64
+        angle = angle_unit * 2 * pi
+        radius = sqrt(radius_unit) * max_distance_meters
+        earth_radius = 6378137
+        latitude_rad = radians(latitude)
+
+        delta_lat = (radius * sin(angle)) / earth_radius
+        delta_lon = (radius * cos(angle)) / (
+            earth_radius * max(cos(latitude_rad), 0.000001)
+        )
+
+        return (
+            latitude + (delta_lat * 180) / pi,
+            longitude + (delta_lon * 180) / pi,
+        )
 
     @staticmethod
     def _build_frontend_user(user: User) -> FrontendUserResponse:
@@ -383,61 +518,83 @@ class FrontendDataBusinessService(BusinessService):
     def _build_recent_reward(
         self,
         event: XpEvent,
-        map_points_by_id: dict[str, MapPoint],
+        map_secrets_by_id: dict[str, ItemSecret],
     ) -> RecentRewardResponse:
         return RecentRewardResponse(
-            source=self._format_xp_source(event.source, map_points_by_id),
+            source=self._format_xp_source(event.source, map_secrets_by_id),
             xp=abs(event.xp),
             multiplier=self._format_multiplier(event.multiplier),
             time=self._format_relative_time(event.occurred_at),
             color=event.color or UIColorToken.CYAN,
         )
 
-    @staticmethod
-    def _build_map_pin(point: MapPoint) -> MapPinResponse:
+    def _build_map_pin(
+        self,
+        secret: ItemSecret,
+        *,
+        is_opened: bool,
+        is_masked: bool,
+        coords: tuple[float, float],
+    ) -> MapPinResponse:
         return MapPinResponse(
-            id=point.id,
-            name=point.name,
-            coords=(float(point.latitude), float(point.longitude)),
-            rarity=point.rarity,
-            big=point.is_big,
-            hint=point.has_hint,
+            id=self._secret_public_id(secret),
+            name=self._get_public_secret_name(secret, is_masked=is_masked),
+            coords=coords,
+            rarity=self._get_public_secret_rarity(secret, is_masked=is_masked),
+            big=False if is_masked else secret.is_big,
+            hint=True if is_masked else secret.has_hint,
+            done=is_opened,
+            item_id=secret.item_id if is_opened else None,
         )
 
     def _build_nearby_point(
         self,
-        point: MapPoint,
-        is_done: bool,
+        secret: ItemSecret,
+        *,
+        is_opened: bool,
+        is_masked: bool,
+        coords: tuple[float, float],
         distance_meters: float | None,
     ) -> NearbyPointResponse:
         return NearbyPointResponse(
-            id=point.id,
-            name=point.name,
-            coords=(float(point.latitude), float(point.longitude)),
-            category=point.category,
-            rarity=point.rarity,
+            id=self._secret_public_id(secret),
+            name=self._get_public_secret_name(secret, is_masked=is_masked),
+            coords=coords,
+            category=self._get_public_secret_category(secret, is_masked=is_masked),
+            rarity=self._get_public_secret_rarity(secret, is_masked=is_masked),
             distance=self._format_distance(distance_meters, uppercase=False),
-            done=is_done,
+            done=is_opened,
+            item_id=secret.item_id if is_opened else None,
         )
 
     def _build_point_detail(
         self,
         *,
-        point: MapPoint,
-        is_done: bool,
+        secret: ItemSecret,
+        is_opened: bool,
+        is_masked: bool,
         distance_meters: float | None,
         quest_lookup: dict[str, str],
     ) -> PointDetailResponse:
         return PointDetailResponse(
-            id=point.id,
-            name=point.name,
-            category=point.category.upper(),
+            id=self._secret_public_id(secret),
+            name=self._get_public_secret_name(secret, is_masked=is_masked),
+            category=self._get_public_secret_category(
+                secret,
+                is_masked=is_masked,
+            ).upper(),
             distance=self._format_distance(distance_meters, uppercase=True),
-            rarity=point.rarity,
-            reward=point.reward_xp,
-            status="Пройдено" if is_done else "Не пройдено",
-            quest=quest_lookup.get(point.quest_id or "", "Без квеста"),
-            description=point.description,
+            rarity=self._get_public_secret_rarity(secret, is_masked=is_masked),
+            reward=0 if is_masked else secret.reward_xp,
+            status="Найдено" if is_opened else "Не найдено",
+            quest=(
+                "Скрыто"
+                if is_masked
+                else quest_lookup.get(secret.quest_id or "", "Без квеста")
+            ),
+            description="" if is_masked else secret.description,
+            done=is_opened,
+            item_id=secret.item_id if is_opened else None,
         )
 
     @staticmethod
@@ -505,7 +662,7 @@ class FrontendDataBusinessService(BusinessService):
     def _build_xp_history_groups(
         self,
         events: list[XpEvent],
-        map_points_by_id: dict[str, MapPoint],
+        map_secrets_by_id: dict[str, ItemSecret],
     ) -> list[XpHistoryGroupResponse]:
         grouped: defaultdict[date, list[XpEvent]] = defaultdict(list)
         for event in events:
@@ -525,7 +682,7 @@ class FrontendDataBusinessService(BusinessService):
                         XpHistoryItemResponse(
                             source=self._format_xp_source(
                                 event.source,
-                                map_points_by_id,
+                                map_secrets_by_id,
                             ),
                             tag=event.tag or "XP",
                             xp=abs(event.xp),
@@ -650,13 +807,13 @@ class FrontendDataBusinessService(BusinessService):
     @staticmethod
     def _format_xp_source(
         source: str,
-        map_points_by_id: dict[str, MapPoint],
+        map_secrets_by_id: dict[str, ItemSecret],
     ) -> str:
         if source.startswith("scan:"):
-            point_id = source.removeprefix("scan:")
-            point = map_points_by_id.get(point_id)
-            if point is not None:
-                return f"Скан · {point.name}"
+            secret_id = source.removeprefix("scan:")
+            secret = map_secrets_by_id.get(secret_id)
+            if secret is not None:
+                return f"Скан · {secret.title}"
 
         return source
 

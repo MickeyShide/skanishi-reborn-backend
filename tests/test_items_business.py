@@ -188,8 +188,6 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.item_service = item_service
         service.validation_service = validation_service
         service.item_secret_service = item_secret_service
-        redis_fail_open = AsyncMock()
-
         with (
             patch("app.services.business.items.ItemService", return_value=item_service),
             patch(
@@ -200,7 +198,8 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
                 "app.services.business.items.ItemSecretService",
                 return_value=item_secret_service,
             ),
-            patch("app.services.business.items.redis_fail_open", redis_fail_open),
+            patch("app.services.business.items.UserService", return_value=user_service),
+            patch("app.services.business.items.redis_fail_open", new_callable=AsyncMock) as redis_fail_open_mock,
         ):
             result = await ItemsBusinessService.collect_item_by_secret(
                 service,
@@ -217,7 +216,7 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
             item_secret_id=5,
             rank=4,
         )
-        redis_fail_open.assert_awaited_once()
+        redis_fail_open_mock.assert_awaited_once()
 
     async def test_collect_item_by_secret_returns_existing_validation(self) -> None:
         token = "abc.def.ghijklmnop"
@@ -258,8 +257,6 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.item_service = item_service
         service.validation_service = validation_service
         service.item_secret_service = item_secret_service
-        redis_fail_open = AsyncMock()
-
         with (
             patch("app.services.business.items.ItemService", return_value=item_service),
             patch(
@@ -270,7 +267,8 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
                 "app.services.business.items.ItemSecretService",
                 return_value=item_secret_service,
             ),
-            patch("app.services.business.items.redis_fail_open", redis_fail_open),
+            patch("app.services.business.items.UserService", return_value=user_service),
+            patch("app.services.business.items.redis_fail_open", new_callable=AsyncMock) as redis_fail_open_mock,
         ):
             result = await ItemsBusinessService.collect_item_by_secret(
                 service,
@@ -279,7 +277,7 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "already_collected")
-        self.assertEqual(redis_fail_open.await_count, 0)
+        self.assertEqual(redis_fail_open_mock.await_count, 0)
         self.assertEqual(validation_service.create_validation.await_count, 0)
 
 

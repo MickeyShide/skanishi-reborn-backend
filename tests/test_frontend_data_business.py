@@ -11,8 +11,8 @@ from app.services.business.frontend_data import FrontendDataBusinessService
 from app.services.errors import RewardAlreadyClaimedError
 
 
-def build_map_point(
-    point_id: str,
+def build_map_secret(
+    secret_id: int,
     *,
     latitude: str,
     longitude: str,
@@ -21,10 +21,12 @@ def build_map_point(
     rarity: Rarity = Rarity.RARE,
     reward_xp: int = 100,
     quest_id: str | None = None,
+    hidden: bool = False,
 ):
     return SimpleNamespace(
-        id=point_id,
-        name=name,
+        id=secret_id,
+        item_id=secret_id + 100,
+        title=name,
         category=category,
         rarity=rarity,
         latitude=Decimal(latitude),
@@ -34,6 +36,7 @@ def build_map_point(
         quest_id=quest_id,
         is_big=False,
         has_hint=False,
+        hidden=hidden,
     )
 
 
@@ -46,18 +49,18 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         service.quest_service.get_active_quests = AsyncMock(
             return_value=[SimpleNamespace(id="quest-1", name="Тени Старого города")]
         )
-        service.map_point_service = MagicMock()
-        service.map_point_service.get_active_points = AsyncMock(
+        service.item_secret_service = MagicMock()
+        service.item_secret_service.get_active_map_secrets = AsyncMock(
             return_value=[
-                build_map_point(
-                    "far-point",
+                build_map_secret(
+                    1,
                     latitude="55.760000",
                     longitude="37.630000",
                     name="Дальняя точка",
                     quest_id="quest-1",
                 ),
-                build_map_point(
-                    "near-point",
+                build_map_secret(
+                    2,
                     latitude="55.751620",
                     longitude="37.618660",
                     name="Ближняя точка",
@@ -65,12 +68,9 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
                 ),
             ]
         )
-        service.xp_event_service = MagicMock()
-        service.xp_event_service.build_scan_source.side_effect = (
-            lambda point_id: f"scan:{point_id}"
-        )
-        service.xp_event_service.get_user_claimed_scan_sources = AsyncMock(
-            return_value={"scan:far-point"}
+        service.validation_service = MagicMock()
+        service.validation_service.get_user_item_secret_ids = AsyncMock(
+            return_value={1}
         )
 
         result = await FrontendDataBusinessService.get_map_points(
@@ -84,9 +84,57 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual([point.id for point in result.nearby_points], ["near-point"])
+        self.assertEqual([point.id for point in result.nearby_points], ["2"])
         self.assertEqual(result.nearby_points[0].distance, "44 м")
-        self.assertEqual(result.point_details["near-point"].status, "Не пройдено")
+        self.assertEqual(result.point_details["2"].status, "Не найдено")
+
+    async def test_hidden_unopened_secret_only_exposes_nearby_coords(self) -> None:
+        user = SimpleNamespace(id=77)
+        service = object.__new__(FrontendDataBusinessService)
+        service.quest_service = MagicMock()
+        service.quest_service.get_active_quests = AsyncMock(return_value=[])
+        service.item_secret_service = MagicMock()
+        service.item_secret_service.get_active_map_secrets = AsyncMock(
+            return_value=[
+                build_map_secret(
+                    3,
+                    latitude="55.751620",
+                    longitude="37.618660",
+                    name="Секретное имя",
+                    category="AR-сцена",
+                    rarity=Rarity.MYTHIC,
+                    reward_xp=500,
+                    hidden=True,
+                )
+            ]
+        )
+        service.validation_service = MagicMock()
+        service.validation_service.get_user_item_secret_ids = AsyncMock(
+            return_value=set()
+        )
+
+        result = await FrontendDataBusinessService.get_map_points(
+            service,
+            user,
+            MapPointsQueryParams(),
+        )
+
+        pin = result.map_pins[0]
+        detail = result.point_details["3"]
+        distance = FrontendDataBusinessService._distance_meters(
+            55.751620,
+            37.618660,
+            pin.coords[0],
+            pin.coords[1],
+        )
+
+        self.assertLessEqual(distance, 100)
+        self.assertNotEqual(pin.coords, (55.751620, 37.618660))
+        self.assertEqual(pin.name, "Скрытый секрет")
+        self.assertEqual(pin.rarity, Rarity.COMMON)
+        self.assertEqual(detail.description, "")
+        self.assertEqual(detail.reward, 0)
+        self.assertIsNone(detail.item_id)
 
     async def test_get_xp_history_returns_weekly_summary_for_filter(self) -> None:
         user = SimpleNamespace(id=77)
@@ -117,8 +165,10 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         service.xp_event_service.get_user_events_between = AsyncMock(
             return_value=[history_event, penalty_event]
         )
-        service.map_point_service = MagicMock()
-        service.map_point_service.get_active_points = AsyncMock(return_value=[])
+        service.item_secret_service = MagicMock()
+        service.item_secret_service.get_active_map_secrets = AsyncMock(
+            return_value=[]
+        )
 
         result = await FrontendDataBusinessService.get_xp_history(
             service,
@@ -173,8 +223,8 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
             streak_days=6,
             season_label="СЕЗОН 2 · ПУЛЬС ГОРОДА",
         )
-        map_point = build_map_point(
-            "roof-beacon",
+        item_secret = build_map_secret(
+            1,
             latitude="55.751620",
             longitude="37.618660",
             name="Маяк на крыше",
@@ -183,22 +233,21 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         )
 
         service.get_current_user = AsyncMock(return_value=user)
-        service.map_point_service = MagicMock()
-        service.map_point_service.get_active_point_by_id = AsyncMock(
-            return_value=map_point
+        service.item_secret_service = MagicMock()
+        service.item_secret_service.get_active_map_secret_by_id = AsyncMock(
+            return_value=item_secret
         )
         service.xp_event_service = MagicMock()
-        service.xp_event_service.build_scan_source.return_value = "scan:roof-beacon"
+        service.xp_event_service.build_scan_source.return_value = "scan:1"
         service.xp_event_service.get_user_event_by_source = AsyncMock(return_value=None)
         service.xp_event_service.create_scan_claim_event = AsyncMock()
         service.user_service = MagicMock()
-        service.user_service.apply_scan_reward = AsyncMock(return_value=updated_user)
         service.user_service.apply_scan_reward = AsyncMock(return_value=updated_user)
 
         result = await FrontendDataBusinessService.claim_scan_reward(
             service,
             user,
-            ScanClaimRequest(scan_id="roof-beacon"),
+            ScanClaimRequest(scan_id="1"),
         )
 
         service.user_service.apply_scan_reward.assert_awaited_once_with(
@@ -209,22 +258,29 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.xp, 250)
         self.assertEqual(result.user.id, "0xN4TE")
         self.assertIs(service.user, updated_user)
+        service.xp_event_service.create_scan_claim_event.assert_awaited_once_with(
+            user_id=77,
+            scan_id="1",
+            reward_xp=250,
+            occurred_at=result.claimed_at,
+            color=UIColorToken.VIOLET_HI,
+        )
 
     async def test_claim_scan_reward_rejects_duplicate(self) -> None:
         user = SimpleNamespace(id=77)
         service = object.__new__(FrontendDataBusinessService)
         service.get_current_user = AsyncMock(return_value=user)
-        service.map_point_service = MagicMock()
-        service.map_point_service.get_active_point_by_id = AsyncMock(
-            return_value=build_map_point(
-                "roof-beacon",
+        service.item_secret_service = MagicMock()
+        service.item_secret_service.get_active_map_secret_by_id = AsyncMock(
+            return_value=build_map_secret(
+                1,
                 latitude="55.751620",
                 longitude="37.618660",
                 name="Маяк на крыше",
             )
         )
         service.xp_event_service = MagicMock()
-        service.xp_event_service.build_scan_source.return_value = "scan:roof-beacon"
+        service.xp_event_service.build_scan_source.return_value = "scan:1"
         service.xp_event_service.get_user_event_by_source = AsyncMock(
             return_value=SimpleNamespace(
                 id=1,
@@ -237,5 +293,5 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
             await FrontendDataBusinessService.claim_scan_reward(
                 service,
                 user,
-                ScanClaimRequest(scan_id="roof-beacon"),
+                ScanClaimRequest(scan_id="1"),
             )

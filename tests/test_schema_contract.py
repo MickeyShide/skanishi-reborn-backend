@@ -10,7 +10,6 @@ from app.db.models.prototype import Prototype
 from app.db.models.refresh_session import RefreshSession
 from app.db.models.validation import Validation
 
-
 MIGRATION_PATH = (
     Path(__file__).resolve().parents[1]
     / "migrations"
@@ -25,6 +24,23 @@ class ModelSchemaContractTests(TestCase):
         self.assertEqual(RefreshSession.__table__.c.token_hash.type.length, 64)
         self.assertIsInstance(ItemSecret.__table__.c.secret_hash.type, CHAR)
         self.assertEqual(ItemSecret.__table__.c.secret_hash.type.length, 64)
+
+    def test_item_secrets_own_map_fields(self) -> None:
+        self.assertNotIn("map_points", ItemSecret.metadata.tables)
+
+        for column_name in [
+            "category",
+            "rarity",
+            "latitude",
+            "longitude",
+            "reward_xp",
+            "description",
+            "quest_id",
+            "is_big",
+            "has_hint",
+            "hidden",
+        ]:
+            self.assertIn(column_name, ItemSecret.__table__.c)
 
     def test_foreign_keys_are_named_explicitly(self) -> None:
         tables = [

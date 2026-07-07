@@ -21,3 +21,36 @@ class ItemSecretRepository(BaseRepository[ItemSecret]):
 
         return result.scalar_one_or_none()
 
+    async def get_active_map_secrets(self) -> list[ItemSecret]:
+        query = (
+            select(ItemSecret)
+            .where(
+                ItemSecret.is_active.is_(True),
+                ItemSecret.latitude.is_not(None),
+                ItemSecret.longitude.is_not(None),
+            )
+            .order_by(ItemSecret.title.asc(), ItemSecret.id.asc())
+        )
+
+        result = await self.session.execute(query)
+
+        return list(result.scalars().all())
+
+    async def get_active_map_secret_by_id(
+        self,
+        secret_id: int,
+    ) -> ItemSecret | None:
+        query = (
+            select(ItemSecret)
+            .where(
+                ItemSecret.id == secret_id,
+                ItemSecret.is_active.is_(True),
+                ItemSecret.latitude.is_not(None),
+                ItemSecret.longitude.is_not(None),
+            )
+            .limit(1)
+        )
+
+        result = await self.session.execute(query)
+
+        return result.scalar_one_or_none()

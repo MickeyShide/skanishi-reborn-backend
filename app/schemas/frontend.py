@@ -52,15 +52,21 @@ class RecentRewardResponse(BaseModel):
 
 
 class MapPinResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(min_length=1, max_length=96)
     name: str = Field(min_length=1, max_length=160)
     coords: tuple[float, float]
     rarity: Rarity
     big: bool = False
     hint: bool = False
+    done: bool = False
+    item_id: int | None = Field(default=None, alias="itemId")
 
 
 class NearbyPointResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(min_length=1, max_length=96)
     name: str = Field(min_length=1, max_length=160)
     coords: tuple[float, float]
@@ -68,9 +74,12 @@ class NearbyPointResponse(BaseModel):
     rarity: Rarity
     distance: str = Field(min_length=1, max_length=32)
     done: bool
+    item_id: int | None = Field(default=None, alias="itemId")
 
 
 class PointDetailResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(min_length=1, max_length=96)
     name: str = Field(min_length=1, max_length=160)
     category: str = Field(min_length=1, max_length=64)
@@ -80,6 +89,8 @@ class PointDetailResponse(BaseModel):
     status: str = Field(min_length=1, max_length=64)
     quest: str = Field(min_length=1, max_length=160)
     description: str = Field(default="")
+    done: bool = False
+    item_id: int | None = Field(default=None, alias="itemId")
 
 
 class StatCardResponse(BaseModel):
