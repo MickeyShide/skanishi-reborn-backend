@@ -139,6 +139,16 @@ class AchievementSummaryResponse(BaseModel):
     total: int = Field(ge=0)
 
 
+class LatestAchievementResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(min_length=1, max_length=128)
+    description: str
+    xp: int
+    rarity: Rarity
+    unlocked_at: datetime = Field(alias="unlockedAt")
+
+
 class AchievementsResponse(BaseModel):
     items: list[AchievementResponse]
     summary: AchievementSummaryResponse
@@ -181,18 +191,25 @@ class FrontendAppStateResponse(BaseModel):
         alias="xpWeekly",
     )
     achievements: list[AchievementResponse]
+    achievement_summary: AchievementSummaryResponse = Field(alias="achievementSummary")
+    latest_achievement: LatestAchievementResponse | None = Field(default=None, alias="latestAchievement")
 
+
+from app.schemas.item import ItemFullResponse
+from app.schemas.validation import ValidationShortResponse
 
 class ScanClaimRequest(BaseModel):
-    scan_id: str = Field(
+    token: str = Field(
         min_length=1,
-        max_length=96,
-        description="Идентификатор scan/map point",
+        max_length=512,
+        description="Идентификатор QR-кода или StartApp токена",
     )
 
 
 class ScanClaimResponse(BaseModel):
-    status: Literal["claimed"] = "claimed"
+    status: Literal["claimed", "already_collected"]
+    item: ItemFullResponse | None = None
+    validation: ValidationShortResponse | None = None
     xp: int = Field(ge=0)
     user: FrontendUserResponse
-    claimed_at: datetime | None = None
+    claimed_at: datetime | None = Field(default=None, alias="claimedAt")

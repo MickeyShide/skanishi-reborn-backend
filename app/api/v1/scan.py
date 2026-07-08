@@ -7,7 +7,14 @@ from app.services.business.frontend_data import FrontendDataBusinessService
 router = APIRouter(prefix="/scan", tags=["Scan"])
 
 
-@router.post("/claim", response_model=ScanClaimResponse)
+from app.api.v1.dependencies import CurrentUser, enforce_csrf_protection
+from fastapi import Depends
+
+@router.post(
+    "/claim",
+    response_model=ScanClaimResponse,
+    dependencies=[Depends(enforce_csrf_protection)],
+)
 async def claim_scan_reward(
     current_user: CurrentUser,
     dto: ScanClaimRequest,

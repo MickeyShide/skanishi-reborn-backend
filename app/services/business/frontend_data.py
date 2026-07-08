@@ -23,6 +23,7 @@ from app.schemas.frontend import (
     ActiveEventResponse,
     FrontendAppStateResponse,
     FrontendUserResponse,
+    LatestAchievementResponse,
     MapPinResponse,
     MapPointsResponse,
     NearbyPointResponse,
@@ -112,6 +113,26 @@ class FrontendDataBusinessService(BusinessService):
         )
         achievements = self._build_achievements(achievement_states)
         unlocked_count = sum(1 for achievement in achievements if achievement.unlocked)
+        achievement_summary = AchievementSummaryResponse(
+            unlocked=unlocked_count,
+            total=len(achievement_states),
+        )
+
+        latest_achievement = None
+        unlocked_states = [
+            (ach, u_ach) for ach, u_ach in achievement_states
+            if u_ach and u_ach.unlocked and u_ach.unlocked_at
+        ]
+        if unlocked_states:
+            latest_ach, latest_u_ach = max(unlocked_states, key=lambda x: x[1].unlocked_at)
+            latest_achievement = LatestAchievementResponse(
+                name=latest_ach.name,
+                description=latest_ach.description,
+                xp=latest_ach.reward_xp,
+                rarity=latest_ach.rarity,
+                unlocked_at=latest_u_ach.unlocked_at,
+            )
+
         stats = self._build_stats(
             scan_count=scan_count,
             point_count=len(map_secrets),
@@ -146,6 +167,8 @@ class FrontendDataBusinessService(BusinessService):
                 week_start=week_start,
             ),
             achievements=achievements,
+            achievement_summary=achievement_summary,
+            latest_achievement=latest_achievement,
         )
 
     async def get_map_points(
@@ -236,8 +259,12 @@ class FrontendDataBusinessService(BusinessService):
         user = current_user
         
         # 0. Anti-Fraud & Rate Limiting
-        from app.core.redis_client import get_redis_client
-        redis = await get_redis_client()
+        from app.core.redis_client import redis_client, redis_fail_open
+        from sqlalchemy.exc import IntegrityError
+        from app.services.errors import ValidationConflictError, ScanNotFoundError, InvalidSecretTokenError
+        from app.services.business.items import ItemsBusinessService
+        
+        redis = redis_client
         rate_limit_key = f"rate_limit:scan:{user.id}"
         
         # Atomically increment and set TTL using Redis Pipeline
@@ -251,60 +278,99 @@ class FrontendDataBusinessService(BusinessService):
             from fastapi import HTTPException
             raise HTTPException(status_code=429, detail="Слишком частые запросы на сканирование. Подождите 5 секунд.")
         
-        secret_id = self._parse_secret_id(dto.scan_id)
-        if secret_id is None:
-            raise ScanNotFoundError()
+        items_service = ItemsBusinessService(self.session)
+        try:
+            claims = items_service._decode_item_secret_token(dto.token)
+            raw_secret = claims.secret
+        except InvalidSecretTokenError:
+            raw_secret = dto.token
 
-        item_secret = await self.item_secret_service.get_active_map_secret_by_id(
-            secret_id
-        )
+        hashed_secret = self.item_secret_service.hash_secret(raw_secret)
+        item_secret = await self.item_secret_service.get_active_by_secret_hash(hashed_secret)
         if item_secret is None:
             raise ScanNotFoundError()
 
-        source = self.xp_event_service.build_scan_source(str(item_secret.id))
-        existing_event = await self.xp_event_service.get_user_event_by_source(
-            user_id=user.id,
-            source=source,
+        catalog_row = await items_service.item_service.get_active_catalog_item(item_secret.item_id)
+        if catalog_row is None:
+            raise ScanNotFoundError()
+
+        item = await items_service.item_service.get_active_item_for_update(item_secret.item_id)
+        if item is None:
+            raise ScanNotFoundError()
+
+        existing_validation = await self.validation_service.get_user_item_validation(
+            user_id=current_user.id,
+            item_id=item.id,
         )
-        if existing_event is not None:
-            raise RewardAlreadyClaimedError()
+        item_response = items_service._build_full_item_response(catalog_row)
+        
+        if existing_validation is not None:
+            return ScanClaimResponse(
+                status="already_collected",
+                item=item_response,
+                validation=items_service._build_validation_short_response(existing_validation),
+                xp=0,
+                user=self._build_frontend_user(user),
+                claimed_at=existing_validation.created_at,
+            )
+
+        rank = item.validation_count + 1
+        await items_service.item_service.increment_validation_count(item)
+
+        try:
+            validation = await self.validation_service.create_validation(
+                user_id=current_user.id,
+                item_id=item.id,
+                item_secret_id=item_secret.id,
+                rank=rank,
+            )
+        except IntegrityError as exc:
+            raise ValidationConflictError() from exc
+
+        await redis_fail_open(
+            lambda: redis_client.delete(f"user:{current_user.id}:validation_count"),
+            default=0,
+        )
 
         claimed_at = datetime.now(UTC)
-        
-        # 1. Create XpEvent to lock the claim and prevent duplicates
-        await self.xp_event_service.create_scan_claim_event(
-            user_id=user.id,
-            scan_id=str(item_secret.id),
-            reward_xp=item_secret.reward_xp,
-            occurred_at=claimed_at,
-            color=self._get_color_for_rarity(item_secret.rarity),
-        )
+        reward_xp = item_secret.reward_xp
 
-        # 2. Write Outbox event for Celery to process
-        from app.db.models.system_events import OutboxEvent
-        from app.core.logger import request_id_ctx
-        
-        outbox_event = OutboxEvent(
-            event_type="scan_claimed",
-            payload={
-                "event_id": f"scan_{user.id}_{item_secret.id}",
-                "user_id": user.id,
-                "scan_id": str(item_secret.id),
-                "reward_xp": item_secret.reward_xp,
-                "rarity": item_secret.rarity.value if hasattr(item_secret.rarity, "value") else item_secret.rarity,
-                "claimed_at": claimed_at.isoformat(),
-                "request_id": request_id_ctx.get(),
-            }
-        )
-        self.session.add(outbox_event)
+        if reward_xp > 0:
+            await self.xp_event_service.create_scan_claim_event(
+                user_id=user.id,
+                scan_id=str(item_secret.id),
+                reward_xp=reward_xp,
+                occurred_at=claimed_at,
+                color=self._get_color_for_rarity(item_secret.rarity),
+            )
+
+            from app.db.models.system_events import OutboxEvent
+            from app.core.logger import request_id_ctx
+            
+            outbox_event = OutboxEvent(
+                event_type="scan_claimed",
+                payload={
+                    "event_id": f"scan_{user.id}_{item_secret.id}",
+                    "user_id": user.id,
+                    "scan_id": str(item_secret.id),
+                    "reward_xp": reward_xp,
+                    "rarity": item_secret.rarity.value if hasattr(item_secret.rarity, "value") else item_secret.rarity,
+                    "claimed_at": claimed_at.isoformat(),
+                    "request_id": request_id_ctx.get(),
+                }
+            )
+            self.session.add(outbox_event)
+
         await self.session.commit()
         
-        # Predict the frontend response so UI updates immediately
         frontend_user = self._build_frontend_user(user)
-        frontend_user.xp += item_secret.reward_xp
+        frontend_user.xp += reward_xp
 
         return ScanClaimResponse(
-            xp=item_secret.reward_xp,
+            status="claimed",
+            item=item_response,
+            validation=items_service._build_validation_short_response(validation),
+            xp=reward_xp,
             user=frontend_user,
             claimed_at=claimed_at,
         )
@@ -524,7 +590,7 @@ class FrontendDataBusinessService(BusinessService):
             level=user.level,
             level_progress=user.level_progress,
             xp=user.xp,
-            next_level_xp=user.next_level_xp,
+            next_level_xp=user.next_level_xp or 1000,
             streak_days=user.streak_days,
             season=user.season_label or "",
         )

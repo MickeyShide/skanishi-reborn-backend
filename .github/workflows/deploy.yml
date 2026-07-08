@@ -129,8 +129,8 @@ jobs:
             exit "$migrate_status"
           fi
           docker compose ps -a
-          docker compose rm -f -s api          # остановить и удалить контейнер
-          docker compose up -d --wait api      # создать новый
+          docker compose rm -f -s api celery celery-beat
+          docker compose up -d --wait api celery celery-beat
           docker compose ps -a
           docker image prune -f
           EOF

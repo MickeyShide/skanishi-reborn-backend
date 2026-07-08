@@ -51,6 +51,7 @@ class UserService(BaseService):
             photo_url=telegram_user.photo_url,
             is_private=True,
             role=UserRole.USER,
+            next_level_xp=get_next_level_xp(1),
         )
 
     async def update_telegram_fields(

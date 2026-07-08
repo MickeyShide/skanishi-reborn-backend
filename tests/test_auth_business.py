@@ -124,7 +124,7 @@ class AuthBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.user.id, 1)
         self.assertEqual(result.user.tg_id, 777)
         self.assertIn("refresh_token=refresh-token", response.headers["set-cookie"])
-        self.assertIn("Path=/auth/refresh", response.headers["set-cookie"])
+        self.assertIn("Path=/api/v1/auth/refresh", response.headers["set-cookie"])
 
     async def test_authenticate_sets_csrf_cookie_when_samesite_none(self) -> None:
         service = object.__new__(AuthBusinessService)

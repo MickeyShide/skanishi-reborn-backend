@@ -17,6 +17,8 @@ from app.main import app
 from app.api.v1.dependencies import get_current_user
 from app.schemas.frontend import (
     AchievementResponse,
+    AchievementSummaryResponse,
+    LatestAchievementResponse,
     AchievementsResponse,
     ActiveEventResponse,
     FrontendAppStateResponse,
@@ -175,7 +177,15 @@ def build_app_state_response() -> FrontendAppStateResponse:
                 unlocked=True,
             )
         ],
-    )
+        achievementSummary=AchievementSummaryResponse(unlocked=1, total=12),
+        latestAchievement=LatestAchievementResponse(
+                name="Первый скан",
+                description="Пройдите первый квест",
+                xp=50,
+                rarity=Rarity.COMMON,
+                unlockedAt=datetime(2026, 7, 5, 12, 0, tzinfo=UTC),
+            ),
+        )
 
 
 class TestFrontendDataRoutes:
@@ -335,13 +345,14 @@ class TestFrontendDataRoutes:
 
     def test_scan_claim_returns_payload(self) -> None:
         expected = ScanClaimResponse(
+            status="claimed",
             xp=250,
             user=build_frontend_user(),
-            claimed_at=datetime(2026, 7, 5, 12, 0, tzinfo=UTC),
+            claimedAt=datetime(2026, 7, 5, 12, 0, tzinfo=UTC),
         )
 
         async def fake_claim_scan_reward(self, current_user, dto):
-            assert dto.scan_id == "roof-beacon"
+            assert dto.token == "roof-beacon"
             return expected
 
         with patch.object(
@@ -352,7 +363,7 @@ class TestFrontendDataRoutes:
             response = self.client.post(
                 "/api/v1/scan/claim",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
-                json={"scan_id": "roof-beacon"},
+                json={"token": "roof-beacon"},
             )
 
         assert response.status_code == 200
@@ -370,7 +381,7 @@ class TestFrontendDataRoutes:
             response = self.client.post(
                 "/api/v1/scan/claim",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
-                json={"scan_id": "missing"},
+                json={"token": "missing"},
             )
 
         assert response.status_code == 404
@@ -388,7 +399,7 @@ class TestFrontendDataRoutes:
             response = self.client.post(
                 "/api/v1/scan/claim",
                 headers={"Authorization": f"Bearer {build_access_token()}"},
-                json={"scan_id": "roof-beacon"},
+                json={"token": "roof-beacon"},
             )
 
         assert response.status_code == 409

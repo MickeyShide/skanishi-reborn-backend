@@ -50,4 +50,25 @@ async def get_current_user(request: Request) -> User:
             raise UserNotFoundError from exc
 
 
+async def get_stream_user(
+    request: Request,
+    token: str | None = None,
+) -> User:
+    access_token = token or get_bearer_token(request)
+    claims = TokenService().decode_access_token(access_token)
+
+    try:
+        user_id = int(claims.sub)
+    except ValueError as exc:
+        raise InvalidAccessTokenError from exc
+
+    async with session_context() as session:
+        user_service = UserService(session)
+        try:
+            return await user_service.get_user_by_id(user_id)
+        except ObjectNotFoundError as exc:
+            raise UserNotFoundError from exc
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+StreamUser = Annotated[User, Depends(get_stream_user)]

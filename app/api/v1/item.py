@@ -37,7 +37,13 @@ async def get_my_items(
     return await ItemsBusinessService().get_my_items(current_user=current_user, params=params)
 
 
-@router.post("/secret", response_model=ValidationResponse)
+from app.api.v1.dependencies import CurrentUser, enforce_csrf_protection
+
+@router.post(
+    "/secret",
+    response_model=ValidationResponse,
+    dependencies=[Depends(enforce_csrf_protection)],
+)
 async def collect_item_by_secret(
     current_user: CurrentUser,
     dto: SecretValidationRequest,

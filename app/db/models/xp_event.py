@@ -57,3 +57,9 @@ Index(
     XpEvent.__table__.c.user_id,
     XpEvent.__table__.c.occurred_at.desc(),
 )
+Index(
+    "ux_xp_events_user_source",
+    "user_id",
+    "source",
+    unique=True,
+)

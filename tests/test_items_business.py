@@ -188,18 +188,20 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.item_service = item_service
         service.validation_service = validation_service
         service.item_secret_service = item_secret_service
+
+        redis_delete_mock = AsyncMock(return_value=1)
+        redis_invalidated_keys: list[str] = []
+
+        async def fake_redis_fail_open(operation, default=None):
+            # Execute the operation to capture the Redis key being deleted
+            try:
+                return await operation()
+            except Exception:
+                return default
+
         with (
-            patch("app.services.business.items.ItemService", return_value=item_service),
-            patch(
-                "app.services.business.items.ValidationService",
-                return_value=validation_service,
-            ),
-            patch(
-                "app.services.business.items.ItemSecretService",
-                return_value=item_secret_service,
-            ),
-            patch("app.services.business.items.UserService", return_value=user_service),
-            patch("app.services.business.items.redis_fail_open", new_callable=AsyncMock) as redis_fail_open_mock,
+            patch("app.services.business.items.redis_fail_open", fake_redis_fail_open),
+            patch("app.services.business.items.redis_client.delete", redis_delete_mock),
         ):
             result = await ItemsBusinessService.collect_item_by_secret(
                 service,
@@ -216,7 +218,8 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
             item_secret_id=5,
             rank=4,
         )
-        redis_fail_open_mock.assert_awaited_once()
+        # Cache invalidation must have been requested for the correct user key
+        redis_delete_mock.assert_awaited_once_with("user:77:validation_count")
 
     async def test_collect_item_by_secret_returns_existing_validation(self) -> None:
         token = "abc.def.ghijklmnop"
@@ -257,18 +260,18 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.item_service = item_service
         service.validation_service = validation_service
         service.item_secret_service = item_secret_service
+
+        redis_delete_mock = AsyncMock(return_value=1)
+
+        async def fake_redis_fail_open(operation, default=None):
+            try:
+                return await operation()
+            except Exception:
+                return default
+
         with (
-            patch("app.services.business.items.ItemService", return_value=item_service),
-            patch(
-                "app.services.business.items.ValidationService",
-                return_value=validation_service,
-            ),
-            patch(
-                "app.services.business.items.ItemSecretService",
-                return_value=item_secret_service,
-            ),
-            patch("app.services.business.items.UserService", return_value=user_service),
-            patch("app.services.business.items.redis_fail_open", new_callable=AsyncMock) as redis_fail_open_mock,
+            patch("app.services.business.items.redis_fail_open", fake_redis_fail_open),
+            patch("app.services.business.items.redis_client.delete", redis_delete_mock),
         ):
             result = await ItemsBusinessService.collect_item_by_secret(
                 service,
@@ -277,7 +280,8 @@ class ItemsBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "already_collected")
-        self.assertEqual(redis_fail_open_mock.await_count, 0)
+        # When item is already collected, cache must NOT be invalidated and validation NOT created
+        self.assertEqual(redis_delete_mock.await_count, 0)
         self.assertEqual(validation_service.create_validation.await_count, 0)
 
 

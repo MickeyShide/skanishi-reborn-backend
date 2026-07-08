@@ -47,10 +47,12 @@ async def event_generator(request: Request, user_id: int) -> AsyncGenerator[dict
         await pubsub.unsubscribe(channel)
         await pubsub.close()
 
+from app.api.v1.dependencies import StreamUser
+
 @router.get("/events")
 async def sse_endpoint(
     request: Request,
-    current_user: User = Depends(get_current_user)
+    current_user: StreamUser,
 ):
     """
     Endpoint for SSE (Server-Sent Events).
