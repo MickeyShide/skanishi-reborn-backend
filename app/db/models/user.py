@@ -1,6 +1,7 @@
+from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, CheckConstraint, Index, text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Index, text
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, String, Text
 
@@ -102,3 +103,20 @@ class User(BaseSQLModel, table=True):
         sa_column_kwargs={"server_default": "0"},
     )
     season_label: str | None = Field(default=None, sa_type=String(160), nullable=True)
+
+    # ── Login / streak / daily tracking ──────────────────────────────────────
+    last_login_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        nullable=True,
+    )
+    last_daily_claimed_at: date | None = Field(
+        default=None,
+        sa_type=Date(),
+        nullable=True,
+    )
+    streak_last_date: date | None = Field(
+        default=None,
+        sa_type=Date(),
+        nullable=True,
+    )

@@ -3,10 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqladmin import Admin
+from app.admin.auth import authentication_backend
+from app.admin.views import admin_views
 from app.api.runtime import router as runtime_router
 from app.api.v1.router import v1_router
 from app.config import settings
-from app.core.database import check_database, close_database, init_engine
+from app.core.database import check_database, close_database, init_engine, engine
 from app.core.errors import register_error_handlers
 from app.core.logger import logger, setup_logging
 from app.core.middlewares import LoggingMiddleware
@@ -74,6 +77,16 @@ def create_app() -> FastAPI:
     # 4. Подключение всех зарегистрированных роутеров приложения
     app.include_router(runtime_router)
     app.include_router(v1_router)
+
+    # 5. Инициализация Admin Panel
+    # Note: the engine is initialized in lifespan, but create_app happens before.
+    # We must ensure the engine is created before passing it to Admin.
+    init_engine(echo=settings.SQL_ECHO)
+    from app.core.database import engine as initialized_engine
+    
+    admin = Admin(app, initialized_engine, authentication_backend=authentication_backend)
+    for view in admin_views:
+        admin.add_view(view)
 
     return app
 

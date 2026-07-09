@@ -6,7 +6,7 @@ from kombu import Queue, Exchange
 celery_app = Celery(
     "skanishi_worker",
     broker=settings.CELERY_BROKER_URL,
-    include=["app.workers.tasks", "app.workers.outbox"]
+    include=["app.workers.tasks", "app.workers.outbox", "app.workers.game_tasks", "app.workers.season_tasks"]
 )
 
 celery_app.conf.update(
@@ -47,8 +47,34 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    # Core outbox relay — keeps latency low
     "publish-outbox-every-2-seconds": {
         "task": "app.workers.outbox.publish_outbox_events",
         "schedule": 2.0,
+    },
+    # Streak maintenance: reset users who haven't logged in for 25h
+    "reset-expired-streaks-hourly": {
+        "task": "app.workers.tasks.reset_expired_streaks",
+        "schedule": 3600.0,  # every hour
+    },
+    # Leaderboard: recompute user ranks
+    "update-rankings-every-5-minutes": {
+        "task": "app.workers.tasks.update_rankings",
+        "schedule": 300.0,  # every 5 minutes
+    },
+    # Housekeeping: delete old ProcessedEvent rows
+    "cleanup-processed-events-daily": {
+        "task": "app.workers.tasks.cleanup_processed_events",
+        "schedule": 86400.0,  # every 24 hours
+    },
+    # Housekeeping: delete expired RefreshSession rows
+    "cleanup-refresh-sessions-daily": {
+        "task": "app.workers.tasks.cleanup_refresh_sessions",
+        "schedule": 86400.0,  # every 24 hours
+    },
+    # Seasons: check for expired active season
+    "close-active-season-hourly": {
+        "task": "app.workers.season_tasks.close_active_season",
+        "schedule": 3600.0,  # every hour
     },
 }

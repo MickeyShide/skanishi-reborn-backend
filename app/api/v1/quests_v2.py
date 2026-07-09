@@ -3,18 +3,15 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.api.v1.dependencies import CurrentUser, enforce_csrf_protection
-from app.schemas.frontend import QuestCardResponse, QuestsResponse
+from app.schemas.frontend import QuestCardResponse
 from app.services.business.daily_and_quests import DailyClaimResponse, UserQuestBusinessService
 
-router = APIRouter(prefix="/quests", tags=["Quest"])
+router = APIRouter(prefix="/quests", tags=["Quests"])
 
 
 @router.get("", response_model=list[QuestCardResponse])
 async def get_user_quests(current_user: CurrentUser) -> list[QuestCardResponse]:
-    """Return active quests with the current user's personal progress.
-
-    Note: replaces the old global progress_percent-based response.
-    """
+    """Return active quests with the current user's personal progress."""
     return await UserQuestBusinessService().get_user_quests(current_user)
 
 

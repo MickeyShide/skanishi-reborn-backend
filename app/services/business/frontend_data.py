@@ -67,7 +67,13 @@ class FrontendDataBusinessService(BusinessService):
         super().__init__(session=session)
 
     async def get_app_state(self, current_user: User) -> FrontendAppStateResponse:
-        user = current_user
+        session = await self._get_session()
+
+        # Record the login and update streak (idempotent within the same calendar day)
+        from app.services.streak import StreakService
+        streak_svc = StreakService(session)
+        user = await streak_svc.record_login(current_user)
+
         quests = await self.quest_service.get_active_quests()
         active_event = await self.event_service.get_active_event()
         map_secrets = await self.item_secret_service.get_active_map_secrets()
@@ -750,13 +756,27 @@ class FrontendDataBusinessService(BusinessService):
             ),
             ProfileLinkResponse(
                 icon="trophy",
+                title="Рейтинг",
+                subtitle=f"Место: {user.rank or '-'}",
+                color=UIColorToken.GOLD,
+                to="/leaderboard",
+            ),
+            ProfileLinkResponse(
+                icon="gem",
                 title="Достижения",
                 subtitle=f"{achievement_unlocked} из {achievement_total}",
                 color=UIColorToken.GOLD,
                 to="/achievements",
             ),
             ProfileLinkResponse(
-                icon="gem",
+                icon="layer",
+                title="Коллекции",
+                subtitle="Собранные наборы",
+                color=UIColorToken.PINK,
+                to="/collections",
+            ),
+            ProfileLinkResponse(
+                icon="map",
                 title="Инвентарь",
                 subtitle="Каталог предметов",
                 color=UIColorToken.VIOLET_HI,

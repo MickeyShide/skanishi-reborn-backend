@@ -27,6 +27,7 @@ class Quest(SlugSQLModel, table=True):
         default=0,
         nullable=False,
         sa_column_kwargs={"server_default": "0"},
+        description="Legacy global display value; per-user progress is in UserQuest.progress.",
     )
     rarity: Rarity = Field(sa_type=rarity_sa_enum(), nullable=False)
     reward_xp: int = Field(
@@ -40,3 +41,18 @@ class Quest(SlugSQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"server_default": text("true")},
     )
+    # ── Quest completion mechanics ───────────────────────────────────────────
+    # target_count: how many qualifying actions are needed to complete the quest.
+    # condition_tag: optional XpEvent/scan tag filter (e.g. "scan", "metro-scan").
+    target_count: int = Field(
+        default=1,
+        nullable=False,
+        sa_column_kwargs={"server_default": "1"},
+    )
+    condition_tag: str | None = Field(
+        default=None,
+        sa_type=String(64),
+        nullable=True,
+        description="Optional tag that qualifying scans must carry to count toward this quest.",
+    )
+

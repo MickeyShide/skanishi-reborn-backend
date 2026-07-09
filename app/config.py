@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: str = Field(min_length=1)
     YANDEX_MAPS_API_KEY: str | None = None
+    ADMIN_SECRET_KEY: str | None = None
 
     FRONTEND_ORIGINS: Annotated[list[str], NoDecode]
 

@@ -1,0 +1,49 @@
+from sqladmin import ModelView
+from app.db.models.user import User
+from app.db.models.quest import Quest
+from app.db.models.item_secrets import ItemSecret
+from app.db.models.event import Event
+from app.db.models.collection import Collection
+from app.db.models.achievement import Achievement
+from app.db.models.season import Season
+
+class UserAdmin(ModelView, model=User):
+    column_list = [User.id, User.tg_id, User.username, User.role, User.level, User.xp, User.is_private]
+    column_searchable_list = [User.username, User.tg_id, User.first_name, User.last_name]
+    column_sortable_list = [User.id, User.xp, User.level, User.rank]
+    page_size = 50
+
+class QuestAdmin(ModelView, model=Quest):
+    column_list = [Quest.id, Quest.name, Quest.rarity, Quest.is_active, Quest.target_count]
+    column_searchable_list = [Quest.name, Quest.description]
+    column_sortable_list = [Quest.id, Quest.is_active]
+
+class ItemSecretAdmin(ModelView, model=ItemSecret):
+    column_list = [ItemSecret.id, ItemSecret.title, ItemSecret.rarity, ItemSecret.secret_token, ItemSecret.is_active]
+    column_searchable_list = [ItemSecret.title, ItemSecret.secret_token]
+
+class EventAdmin(ModelView, model=Event):
+    column_list = [Event.id, Event.title, Event.is_active, Event.starts_at, Event.ends_at]
+    column_searchable_list = [Event.title]
+
+class CollectionAdmin(ModelView, model=Collection):
+    column_list = [Collection.id, Collection.title, Collection.is_active]
+    column_searchable_list = [Collection.title]
+
+class AchievementAdmin(ModelView, model=Achievement):
+    column_list = [Achievement.id, Achievement.name, Achievement.category_id, Achievement.is_active]
+    column_searchable_list = [Achievement.name]
+
+class SeasonAdmin(ModelView, model=Season):
+    column_list = [Season.id, Season.name, Season.is_active, Season.starts_at, Season.ends_at]
+    column_searchable_list = [Season.name]
+
+admin_views = [
+    UserAdmin,
+    QuestAdmin,
+    ItemSecretAdmin,
+    EventAdmin,
+    CollectionAdmin,
+    AchievementAdmin,
+    SeasonAdmin,
+]
