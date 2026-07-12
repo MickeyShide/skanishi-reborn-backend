@@ -143,9 +143,10 @@ def upgrade() -> None:
         "community_goal",
         "personal_challenge",
         name="eventtype",
-        create_type=True,
+        create_type=False,
     )
-    event_type_enum.create(op.get_bind(), checkfirst=True)
+    op.execute("DROP TYPE IF EXISTS eventtype CASCADE")
+    op.execute("CREATE TYPE eventtype AS ENUM ('xp_boost', 'thematic', 'location', 'community_goal', 'personal_challenge')")
 
     op.add_column(
         "events",

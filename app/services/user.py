@@ -74,8 +74,19 @@ class UserService(BaseService):
         self,
         telegram_user: TelegramUserData,
         referred_by_id: int | None = None,
+    ) -> User:
+        user, _ = await self.get_or_create_from_telegram_with_status(
+            telegram_user,
+            referred_by_id=referred_by_id,
+        )
+        return user
+
+    async def get_or_create_from_telegram_with_status(
+        self,
+        telegram_user: TelegramUserData,
+        referred_by_id: int | None = None,
     ) -> tuple[User, bool]:
-        """Returns tuple (User, is_new)"""
+        """Returns tuple (User, is_new)."""
         user = await self.get_user_by_tg_id(telegram_user.tg_id)
 
         if user is None:
@@ -109,7 +120,8 @@ class UserService(BaseService):
 
     async def add_xp_and_check_level_up(self, user: User, added_xp: int) -> User:
         new_xp = user.xp + added_xp
-        new_coins = user.coins + max(1, added_xp // 2) # 1 coin per 2 XP
+        current_coins = getattr(user, "coins", 0)
+        new_coins = current_coins + max(1, added_xp // 2) if added_xp > 0 else current_coins
         new_level = user.level
         next_level_xp = user.next_level_xp or get_next_level_xp(new_level)
 

@@ -12,6 +12,8 @@ from app.services.user import UserService
 
 
 class UserBusinessService(BusinessService):
+    user_service: UserService
+
     def __init__(
         self,
         session: AsyncSession | None = None,

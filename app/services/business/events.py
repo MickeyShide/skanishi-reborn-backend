@@ -2,29 +2,56 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
-from app.db.models.event import Event, EventGoal, EventItem, EventModifier, UserEvent
+from app.db.models.event import Event
+from app.db.models.event_extended import EventGoal, EventItem, EventModifier, UserEvent
 from app.db.models.user import User
 from app.schemas.frontend import FrontendUserResponse
 from app.services.business.base import BusinessService
 
 
-class EventModifierResponse(EventModifier):
-    pass
+class EventModifierResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    event_id: str
+    modifier_type: str
+    value: str
 
 
-class EventItemResponse(EventItem):
-    pass
+class EventItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    event_id: str
+    item_id: int
 
 
-class EventGoalResponse(EventGoal):
+class EventGoalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    event_id: str
+    target_value: int
+    current_value: int
+    reward_xp: int
     progress: int = 0
     is_completed: bool = False
     reward_claimed: bool = False
 
 
-class EventDetailResponse(Event):
+class EventDetailResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    rarity: str
+    xp_multiplier: str
+    starts_at: datetime
+    ends_at: datetime
+    is_active: bool
     modifiers: list[EventModifierResponse] = []
     items: list[EventItemResponse] = []
     goals: list[EventGoalResponse] = []

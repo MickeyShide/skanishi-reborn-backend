@@ -40,6 +40,8 @@ def build_map_secret(
         is_big=False,
         has_hint=False,
         hidden=hidden,
+        validation_count=0,
+        cooldown_until=None,
     )
 
 
@@ -275,12 +277,13 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "claimed")
-        self.assertEqual(result.xp, 250)
+        xp_reward = next((r.amount for r in result.rewards if r.type == "xp"), 0)
+        self.assertEqual(xp_reward, 2500)
         self.assertEqual(result.user.id, "0xN4TE77")
         service.xp_event_service.create_scan_claim_event.assert_awaited_once_with(
             user_id=77,
             scan_id="1",
-            reward_xp=250,
+            reward_xp=2500,
             occurred_at=ANY,
             color=UIColorToken.VIOLET_HI,
         )
@@ -330,4 +333,5 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "already_collected")
-        self.assertEqual(result.xp, 0)
+        xp_reward = next((r.amount for r in result.rewards if r.type == "xp"), 0)
+        self.assertEqual(xp_reward, 0)

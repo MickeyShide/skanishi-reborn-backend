@@ -102,6 +102,16 @@ class ItemSecret(BaseSQLModel, table=True):
         sa_column_kwargs={"server_default": text("true")},
     )
 
+    validation_count: int = Field(
+        default=0,
+        nullable=False,
+        sa_column_kwargs={"server_default": "0"},
+    )
+    
+    cooldown_until: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True), nullable=True
+    )
+
     expires_at: datetime | None = Field(
         default=None, sa_type=DateTime(timezone=True), nullable=True
     )

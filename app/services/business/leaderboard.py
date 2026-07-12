@@ -23,7 +23,7 @@ class LeaderboardBusinessService(BusinessService):
         )
         users = list(result.scalars().all())
 
-        from app.services.business.frontend_data import FrontendDataService
+        from app.services.business.frontend_data import FrontendDataBusinessService
         
         # Build responses
-        return [FrontendDataService._build_frontend_user(u) for u in users]
+        return [FrontendDataBusinessService._build_frontend_user(u) for u in users]

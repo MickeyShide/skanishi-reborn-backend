@@ -6,6 +6,8 @@ class ShopItemResponse(BaseModel):
     item_type: str
     price: int
     asset_url: str | None = None
+    fragment_cost: int | None = None
+    fragment_rarity: str | None = None
     is_owned: bool
     is_equipped: bool
 

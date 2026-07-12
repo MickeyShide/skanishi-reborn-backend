@@ -120,6 +120,7 @@ class BaseRepository(Generic[T], ABC):
         return result.scalar_one_or_none() is not None
 
     async def update(self, obj: T, **data: Any) -> T:
+        self.session.add(obj)
         for field, value in data.items():
             setattr(obj, field, value)
 

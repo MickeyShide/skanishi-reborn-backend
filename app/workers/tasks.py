@@ -42,7 +42,10 @@ def process_scan_claimed(self, payload: dict) -> None:
 
     event_id: str = payload["event_id"]
     user_id: int = payload["user_id"]
-    reward_xp: int = payload["reward_xp"]
+    reward_xp: int = payload.get("reward_xp", 0)
+    reward_coins: int = payload.get("reward_coins", 0)
+    reward_fragment_amount: int = payload.get("reward_fragment_amount", 0)
+    reward_fragment_rarity: str = payload.get("reward_fragment_rarity", "")
 
     async def _run() -> None:
         async with session_context() as session:
@@ -80,6 +83,16 @@ def process_scan_claimed(self, payload: dict) -> None:
                 user.xp,
             )
             updated_user = await user_service.add_xp_and_check_level_up(user, reward_xp)
+            if reward_coins > 0:
+                logger.info("Adding +%s Coins to user %s.", reward_coins, user_id)
+                updated_user.coins += reward_coins
+
+            if reward_fragment_amount > 0 and reward_fragment_rarity:
+                logger.info("Adding +%s %s Fragments to user %s.", reward_fragment_amount, reward_fragment_rarity, user_id)
+                frag_attr = f"fragments_{reward_fragment_rarity.lower()}"
+                if hasattr(updated_user, frag_attr):
+                    setattr(updated_user, frag_attr, getattr(updated_user, frag_attr) + reward_fragment_amount)
+
             new_level = updated_user.level
 
             # 4. Emit level_up outbox event if needed (before commit)
@@ -144,6 +157,89 @@ def process_scan_claimed(self, payload: dict) -> None:
         asyncio.run(_run())
     except Exception as exc:
         logger.error("Error processing scan_claimed event %s: %s", event_id, exc)
+        raise self.retry(exc=exc, countdown=5)
+    finally:
+        request_id_ctx.reset(token)
+
+
+@celery_app.task(bind=True, max_retries=3, queue="progress.commands")
+def process_ugc_passive_income(self, payload: dict) -> None:
+    from app.core.logger import request_id_ctx
+    from app.db.models.user_stickers import UserSticker
+
+    trace_id = payload.get("request_id") or str(uuid.uuid4())
+    token = request_id_ctx.set(trace_id)
+
+    event_id: str = payload["event_id"]
+    creator_id: int = payload["creator_id"]
+    reward_xp: int = payload.get("reward_xp", 0)
+    reward_coins: int = payload.get("reward_coins", 0)
+    sticker_id: int = payload["sticker_id"]
+
+    async def _run() -> None:
+        async with session_context() as session:
+            existing = (
+                await session.execute(
+                    select(ProcessedEvent).where(ProcessedEvent.event_id == event_id)
+                )
+            ).scalar_one_or_none()
+            if existing:
+                return
+
+            user_service = UserService(session)
+            creator = await user_service.get_user_by_id(creator_id)
+            if not creator:
+                session.add(ProcessedEvent(event_id=event_id, status="SKIPPED"))
+                await session.commit()
+                return
+
+            old_level = creator.level
+            updated_creator = await user_service.add_xp_and_check_level_up(creator, reward_xp)
+            if reward_coins > 0:
+                updated_creator.coins += reward_coins
+            new_level = updated_creator.level
+
+            sticker = await session.get(UserSticker, sticker_id)
+            if sticker:
+                sticker.total_passive_xp += reward_xp
+                sticker.total_passive_coins += reward_coins
+
+            if new_level > old_level:
+                session.add(
+                    OutboxEvent(
+                        event_type="level_up",
+                        payload={
+                            "user_id": creator_id,
+                            "old_level": old_level,
+                            "new_level": new_level,
+                        },
+                    )
+                )
+
+            session.add(ProcessedEvent(event_id=event_id, status="DONE"))
+            await session.commit()
+
+        try:
+            channel = f"user_events:{creator_id}"
+            await redis_client.publish(
+                channel,
+                json.dumps(
+                    {
+                        "type": "ugc_income_received",
+                        "xp": reward_xp,
+                        "coins": reward_coins,
+                        "new_total_xp": updated_creator.xp,
+                        "new_total_coins": updated_creator.coins,
+                    }
+                ),
+            )
+        except Exception as redis_exc:
+            logger.warning("Redis publish failed for user %s: %s", creator_id, redis_exc)
+
+    try:
+        asyncio.run(_run())
+    except Exception as exc:
+        logger.error("Error processing ugc_passive_income event %s: %s", event_id, exc)
         raise self.retry(exc=exc, countdown=5)
     finally:
         request_id_ctx.reset(token)

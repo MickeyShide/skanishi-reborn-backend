@@ -111,27 +111,20 @@ class DailyRewardBusinessService(BusinessService):
 
 def _build_user_response(user: User) -> FrontendUserResponse:
     """Quick helper to build a FrontendUserResponse from a User ORM object."""
-    from app.services.user import LEVEL_THRESHOLDS, get_next_level_xp
-
-    level = user.level
-    xp = user.xp or 0
-    current_threshold = LEVEL_THRESHOLDS.get(level, xp)
-    next_threshold = LEVEL_THRESHOLDS.get(level + 1, current_threshold)
-    xp_in_level = xp - current_threshold
-    level_range = max(next_threshold - current_threshold, 1)
-    progress = min(100, int(xp_in_level / level_range * 100))
-
     return FrontendUserResponse(
-        name=user.name or "",
-        username=user.username or "",
-        id=str(user.id),
+        name=user.display_name or user.first_name,
+        username=user.username or user.public_id or f"user{user.id}",
+        id=user.public_id or str(user.id),
         rank=user.rank,
-        level=level,
-        levelProgress=progress,
-        xp=xp,
-        nextLevelXp=next_threshold,
-        streakDays=user.streak_days or 0,
+        level=user.level,
+        level_progress=user.level_progress,
+        xp=user.xp or 0,
+        next_level_xp=user.next_level_xp or 1000,
+        streak_days=user.streak_days or 0,
         season=user.season_label or "",
+        coins=getattr(user, "coins", 0),
+        active_border_id=getattr(user, "active_border_id", None),
+        active_bg_id=getattr(user, "active_bg_id", None),
     )
 
 

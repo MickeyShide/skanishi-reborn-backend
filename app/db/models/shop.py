@@ -20,6 +20,8 @@ class ShopItem(BaseSQLModel, table=True):
         sa_column_kwargs={"server_default": "true"},
     )
     asset_url: str | None = Field(default=None, sa_type=String(1024), nullable=True)
+    fragment_cost: int | None = Field(default=None, nullable=True)
+    fragment_rarity: str | None = Field(default=None, sa_type=String(32), nullable=True)
 
 
 class UserCosmetic(BaseSQLModel, table=True):

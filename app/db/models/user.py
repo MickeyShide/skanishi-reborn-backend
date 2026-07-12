@@ -111,6 +111,14 @@ class User(BaseSQLModel, table=True):
     
     # Economy & Cosmetics
     coins: int = Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"})
+    
+    # Fragments
+    fragments_common: int = Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"})
+    fragments_rare: int = Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"})
+    fragments_epic: int = Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"})
+    fragments_legendary: int = Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"})
+    fragments_mythic: int = Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"})
+    
     active_border_id: int | None = Field(default=None, foreign_key="shop_items.id", nullable=True)
     active_bg_id: int | None = Field(default=None, foreign_key="shop_items.id", nullable=True)
 

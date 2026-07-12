@@ -17,6 +17,7 @@ from app.api.v1.scan import router as scan_router
 from app.api.v1.shop import router as shop_router
 from app.api.v1.stream import router as stream_router
 from app.api.v1.user import router as user_router
+from app.api.v1.ugc import router as ugc_router
 from app.api.v1.xp import router as xp_router
 
 v1_router = APIRouter(prefix="/api/v1")
@@ -38,4 +39,5 @@ v1_router.include_router(leaderboard_router)
 v1_router.include_router(referral_router)
 v1_router.include_router(scan_router)
 v1_router.include_router(shop_router)
+v1_router.include_router(ugc_router)
 v1_router.include_router(stream_router)

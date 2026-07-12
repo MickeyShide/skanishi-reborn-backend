@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.db.models.collection import Collection, CollectionItem, UserCollection
@@ -12,11 +13,29 @@ from app.services.business.daily_and_quests import _build_user_response
 from app.services.user import UserService
 
 
-class CollectionItemResponse(Item):
+class CollectionItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    number: int
+    prototype_id: int
+    category_id: int
+    type_id: int
+    validation_count: int
+    is_active: bool
     is_acquired: bool = False
 
 
-class CollectionResponse(Collection):
+class CollectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    description: str
+    reward_xp: int
+    reward_item_id: int | None = None
+    is_active: bool
     items: list[CollectionItemResponse] = []
     progress_percent: int = 0
     is_completed: bool = False

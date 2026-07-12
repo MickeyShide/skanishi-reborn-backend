@@ -42,8 +42,10 @@ from app.db.models import (
     Prototype,
     Quest,
     Rarity,
+    ShopItem,
 )
 from app.db.models.achievement_condition import AchievementCondition, AchievementConditionType
+from app.db.models.shop import ShopItemType
 
 
 def sha256_secret(raw: str) -> str:
@@ -193,13 +195,7 @@ ACHIEVEMENTS = [
 
 async def seed_system(session) -> None:
     """Seed item types, categories, quests, achievements."""
-    print("→ Seeding item types...")
-    for data in ITEM_TYPES:
-        await get_or_create(session, ItemType, **{k: v for k, v in data.items() if k != "id"},
-                            id=data["id"] if "id" in data else None)
-    # ItemType may not have slug ID — use number-based PK
-    # Let's check: ItemType uses BaseSQLModel (integer PK)
-    # Re-seed without id
+    print("-> Seeding item types...")
     for data in ITEM_TYPES:
         from sqlalchemy import select
         existing = (await session.execute(
@@ -210,7 +206,7 @@ async def seed_system(session) -> None:
             session.add(obj)
     await session.flush()
 
-    print("→ Seeding categories...")
+    print("-> Seeding categories...")
     for data in CATEGORIES:
         from sqlalchemy import select
         existing = (await session.execute(
@@ -221,7 +217,7 @@ async def seed_system(session) -> None:
             session.add(obj)
     await session.flush()
 
-    print("→ Seeding quests...")
+    print("-> Seeding quests...")
     for data in QUESTS:
         existing = await session.get(Quest, data["id"])
         if not existing:
@@ -229,7 +225,7 @@ async def seed_system(session) -> None:
             session.add(obj)
     await session.flush()
 
-    print("→ Seeding achievements + conditions...")
+    print("-> Seeding achievements + conditions...")
     for data in ACHIEVEMENTS:
         conditions = data.pop("conditions", [])
         existing = await session.get(Achievement, data["id"])
@@ -267,13 +263,46 @@ STREET_ART_ITEMS = [
     {"slug": "street-sketchbook", "title": "Скетч-блокнот", "number": 2004, "rarity": Rarity.LEGENDARY},
 ]
 
+INDUSTRIAL_ITEMS = [
+    {"slug": "factory-badge-zil", "title": "Значок ЗИЛ", "number": 3001, "rarity": Rarity.COMMON},
+    {"slug": "factory-pass-red-october", "title": "Пропуск «Красный Октябрь»", "number": 3002, "rarity": Rarity.RARE},
+    {"slug": "workshop-plate-taganka", "title": "Табличка цеха Таганки", "number": 3003, "rarity": Rarity.RARE},
+    {"slug": "signal-lamp-dynamo", "title": "Сигнальная лампа «Динамо»", "number": 3004, "rarity": Rarity.EPIC},
+    {"slug": "engineer-notebook-azlk", "title": "Блокнот инженера АЗЛК", "number": 3005, "rarity": Rarity.LEGENDARY},
+]
+
+SHOP_ITEMS = [
+    {"name": "Неоновый контур", "item_type": ShopItemType.BORDER, "price": 120, "asset_url": "/assets/shop/borders/neon-frame.png"},
+    {"name": "Индустриальная рамка", "item_type": ShopItemType.BORDER, "price": 180, "asset_url": "/assets/shop/borders/industrial-frame.png"},
+    {"name": "Пиксельный обвод", "item_type": ShopItemType.BORDER, "price": 250, "asset_url": "/assets/shop/borders/pixel-frame.png"},
+    {"name": "Ночной город", "item_type": ShopItemType.BACKGROUND, "price": 200, "asset_url": "/assets/shop/backgrounds/night-city.jpg"},
+    {"name": "Карта метро", "item_type": ShopItemType.BACKGROUND, "price": 280, "asset_url": "/assets/shop/backgrounds/metro-map.jpg"},
+    {"name": "Заводской бетон", "item_type": ShopItemType.BACKGROUND, "price": 320, "asset_url": "/assets/shop/backgrounds/factory-wall.jpg"},
+    {"name": "Первопроходец", "item_type": ShopItemType.TITLE, "price": 90, "asset_url": "/assets/shop/titles/pathfinder.svg"},
+    {"name": "Охотник за метками", "item_type": ShopItemType.TITLE, "price": 150, "asset_url": "/assets/shop/titles/hunter.svg"},
+    {"name": "Легенда района", "item_type": ShopItemType.TITLE, "price": 220, "asset_url": "/assets/shop/titles/legend.svg"},
+]
+
 
 async def seed_demo(session) -> None:
     """Seed demo content: items, secrets, collections, events."""
-    print("→ Seeding demo items...")
+    print("-> Seeding demo items...")
 
     # Get first type and transit category
-    from sqlalchemy import select
+    from sqlalchemy import select, text
+
+    async def add_collection_items(collection_id: str, item_ids: list[int]) -> None:
+        for item_id in item_ids:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO collection_items (collection_id, item_id)
+                    VALUES (:collection_id, :item_id)
+                    ON CONFLICT (collection_id, item_id) DO NOTHING
+                    """
+                ),
+                {"collection_id": collection_id, "item_id": item_id},
+            )
     transit_type = (await session.execute(
         select(ItemType).where(ItemType.title == "Жетоны")
     )).scalar_one_or_none()
@@ -285,6 +314,12 @@ async def seed_demo(session) -> None:
     )).scalar_one_or_none()
     street_cat = (await session.execute(
         select(Category).where(Category.title == "Уличная культура")
+    )).scalar_one_or_none()
+    industrial_type = (await session.execute(
+        select(ItemType).where(ItemType.title == "Значки")
+    )).scalar_one_or_none()
+    industrial_cat = (await session.execute(
+        select(Category).where(Category.title == "Индустриальная эпоха")
     )).scalar_one_or_none()
 
     # Need prototypes
@@ -309,6 +344,21 @@ async def seed_demo(session) -> None:
         await session.refresh(street_proto)
     else:
         street_proto = street_proto_existing
+
+    industrial_proto_existing = (await session.execute(
+        select(Prototype).where(Prototype.title == "Прототип: Индустриальные реликвии")
+    )).scalar_one_or_none()
+    if not industrial_proto_existing:
+        industrial_proto = Prototype(
+            title="Прототип: Индустриальные реликвии",
+            type_id=industrial_type.id if industrial_type else 1,
+            description="Предметы заводской эпохи и промышленных районов",
+        )
+        session.add(industrial_proto)
+        await session.flush()
+        await session.refresh(industrial_proto)
+    else:
+        industrial_proto = industrial_proto_existing
 
     metro_item_ids = []
     for data in METRO_ITEMS:
@@ -341,12 +391,15 @@ async def seed_demo(session) -> None:
                 item_id=item.id,
                 secret_hash=secret_hash,
                 title=data["title"],
-                category="transit-relics",
+                category="Реликвии транзита",
                 rarity=data["rarity"],
                 latitude=55.751244 + random.uniform(-0.05, 0.05),
                 longitude=37.618423 + random.uniform(-0.05, 0.05),
                 reward_xp=100 if data["rarity"] == Rarity.COMMON else 200 if data["rarity"] == Rarity.RARE else 350,
                 quest_id="metro-explorer",
+                description="Спрятан рядом с транспортным узлом, ищите старые схемы, турникеты и детали навигации.",
+                is_big=data["rarity"] in {Rarity.EPIC, Rarity.LEGENDARY},
+                has_hint=True,
                 hidden=False,
             ))
     await session.flush()
@@ -381,16 +434,62 @@ async def seed_demo(session) -> None:
                 item_id=item.id,
                 secret_hash=secret_hash,
                 title=data["title"],
-                category="street-culture",
+                category="Уличная культура",
                 rarity=data["rarity"],
                 latitude=55.761244 + random.uniform(-0.05, 0.05),
                 longitude=37.638423 + random.uniform(-0.05, 0.05),
                 reward_xp=50 if data["rarity"] == Rarity.COMMON else 150 if data["rarity"] == Rarity.RARE else 300,
+                description="Ищите во дворах, под арками и рядом с локальными арт-точками.",
+                is_big=data["rarity"] == Rarity.LEGENDARY,
+                has_hint=data["rarity"] != Rarity.COMMON,
                 hidden=False,
             ))
     await session.flush()
 
-    print("→ Seeding collections...")
+    industrial_item_ids = []
+    for index, data in enumerate(INDUSTRIAL_ITEMS):
+        existing = (await session.execute(
+            select(Item).where(Item.number == data["number"])
+        )).scalar_one_or_none()
+        if not existing:
+            item = Item(
+                title=data["title"],
+                number=data["number"],
+                prototype_id=industrial_proto.id,
+                category_id=industrial_cat.id if industrial_cat else 1,
+                type_id=industrial_type.id if industrial_type else 1,
+            )
+            session.add(item)
+            await session.flush()
+            await session.refresh(item)
+        else:
+            item = existing
+        industrial_item_ids.append(item.id)
+
+        raw_secret = f"demo-industrial-{data['slug']}"
+        secret_hash = sha256_secret(raw_secret)
+        existing_secret = (await session.execute(
+            select(ItemSecret).where(ItemSecret.secret_hash == secret_hash)
+        )).scalar_one_or_none()
+        if not existing_secret:
+            session.add(ItemSecret(
+                item_id=item.id,
+                secret_hash=secret_hash,
+                title=data["title"],
+                category="Индустриальная эпоха",
+                rarity=data["rarity"],
+                latitude=55.731244 + random.uniform(-0.07, 0.07),
+                longitude=37.588423 + random.uniform(-0.07, 0.07),
+                reward_xp=90 if data["rarity"] == Rarity.COMMON else 180 if data["rarity"] == Rarity.RARE else 320 if data["rarity"] == Rarity.EPIC else 500,
+                quest_id="urban-legend" if index % 2 == 0 else "night-owl",
+                description="Обычно такие находки прячутся у старых корпусов, проходных и бывших производственных линий.",
+                is_big=data["rarity"] in {Rarity.EPIC, Rarity.LEGENDARY},
+                has_hint=True,
+                hidden=index % 2 == 1,
+            ))
+    await session.flush()
+
+    print("-> Seeding collections...")
     metro_col = await session.get(Collection, "metro-tokens")
     if not metro_col:
         metro_col = Collection(
@@ -401,8 +500,7 @@ async def seed_demo(session) -> None:
         )
         session.add(metro_col)
         await session.flush()
-        for item_id in metro_item_ids:
-            session.add(CollectionItem(collection_id="metro-tokens", item_id=item_id))
+        await add_collection_items("metro-tokens", metro_item_ids)
 
     street_col = await session.get(Collection, "street-art-set")
     if not street_col:
@@ -414,27 +512,69 @@ async def seed_demo(session) -> None:
         )
         session.add(street_col)
         await session.flush()
-        for item_id in street_item_ids:
-            session.add(CollectionItem(collection_id="street-art-set", item_id=item_id))
+        await add_collection_items("street-art-set", street_item_ids)
+
+    industrial_col = await session.get(Collection, "factory-echoes")
+    if not industrial_col:
+        industrial_col = Collection(
+            id="factory-echoes",
+            name="Эхо заводов",
+            description="Соберите артефакты индустриального прошлого города",
+            reward_xp=650,
+        )
+        session.add(industrial_col)
+        await session.flush()
+        await add_collection_items("factory-echoes", industrial_item_ids)
 
     await session.flush()
 
-    print("→ Seeding demo event...")
+    print("-> Seeding demo events...")
     from datetime import UTC, datetime, timedelta
     from decimal import Decimal
 
-    demo_event = await session.get(Event, "double-xp-weekend")
-    if not demo_event:
-        now = datetime.now(UTC)
-        session.add(Event(
-            id="double-xp-weekend",
-            title="Выходные двойного XP",
-            rarity=Rarity.RARE,
-            xp_multiplier=Decimal("2.0"),
-            starts_at=now - timedelta(hours=1),
-            ends_at=now + timedelta(days=2),
-            is_active=True,
-        ))
+    now = datetime.now(UTC)
+    demo_events = [
+        {
+            "id": "double-xp-weekend",
+            "title": "Выходные двойного XP",
+            "rarity": Rarity.RARE,
+            "xp_multiplier": Decimal("2.0"),
+            "starts_at": now - timedelta(hours=1),
+            "ends_at": now + timedelta(days=2),
+            "is_active": True,
+        },
+        {
+            "id": "night-hunt",
+            "title": "Ночная охота за артефактами",
+            "rarity": Rarity.EPIC,
+            "xp_multiplier": Decimal("2.5"),
+            "starts_at": now + timedelta(hours=6),
+            "ends_at": now + timedelta(days=3),
+            "is_active": True,
+        },
+        {
+            "id": "district-rush",
+            "title": "Рывок по району",
+            "rarity": Rarity.COMMON,
+            "xp_multiplier": Decimal("1.5"),
+            "starts_at": now - timedelta(days=1),
+            "ends_at": now + timedelta(days=1),
+            "is_active": True,
+        },
+    ]
+    for event_data in demo_events:
+        demo_event = await session.get(Event, event_data["id"])
+        if not demo_event:
+            session.add(Event(**event_data))
+    await session.flush()
+
+    print("-> Seeding shop cosmetics...")
+    for data in SHOP_ITEMS:
+        existing = (await session.execute(
+            select(ShopItem).where(ShopItem.name == data["name"])
+        )).scalar_one_or_none()
+        if not existing:
+            session.add(ShopItem(**data))
     await session.flush()
 
     print(f"\n{'='*50}")
@@ -443,6 +583,8 @@ async def seed_demo(session) -> None:
         print(f"  Metro: demo-metro-{data['slug']}")
     for data in STREET_ART_ITEMS:
         print(f"  Street: demo-street-{data['slug']}")
+    for data in INDUSTRIAL_ITEMS:
+        print(f"  Industrial: demo-industrial-{data['slug']}")
     print("="*50)
 
 
@@ -464,7 +606,7 @@ async def main(mode: str, reset: bool) -> None:
 
         await session.commit()
 
-    print(f"\n✅ Seed [{mode}] completed successfully.")
+    print(f"\n[ok] Seed [{mode}] completed successfully.")
 
 
 if __name__ == "__main__":

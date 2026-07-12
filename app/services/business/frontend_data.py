@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from hashlib import sha256
+import inspect
 from math import asin, cos, pi, radians, sin, sqrt
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -274,12 +275,22 @@ class FrontendDataBusinessService(BusinessService):
         rate_limit_key = f"rate_limit:scan:{user.id}"
         
         # Atomically increment and set TTL using Redis Pipeline
-        async with redis.pipeline(transaction=True) as pipe:
+        pipeline = redis.pipeline(transaction=True)
+        if inspect.isawaitable(pipeline):
+            pipeline = await pipeline
+
+        async with pipeline as pipe:
             await pipe.incr(rate_limit_key)
             await pipe.expire(rate_limit_key, 5) # 5 seconds window
             results = await pipe.execute()
             
         requests_in_window = results[0]
+        if not isinstance(requests_in_window, int):
+            try:
+                requests_in_window = int(requests_in_window)
+            except (TypeError, ValueError):
+                requests_in_window = 1
+
         if requests_in_window > 1:
             from fastapi import HTTPException
             raise HTTPException(status_code=429, detail="Слишком частые запросы на сканирование. Подождите 5 секунд.")
@@ -294,7 +305,112 @@ class FrontendDataBusinessService(BusinessService):
         hashed_secret = self.item_secret_service.hash_secret(raw_secret)
         item_secret = await self.item_secret_service.get_active_by_secret_hash(hashed_secret)
         if item_secret is None:
+            # Check for UGC Sticker
+            from app.db.models.user_stickers import UserSticker, UserStickerScan
+            from sqlalchemy import select
+            ugc_sticker = await self.session.execute(
+                select(UserSticker).where(UserSticker.token == raw_secret, UserSticker.is_active.is_(True))
+            )
+            ugc_sticker = ugc_sticker.scalar_one_or_none()
+            
+            if ugc_sticker:
+                from datetime import datetime, UTC
+                from fastapi import HTTPException
+                
+                if ugc_sticker.user_id == current_user.id:
+                    raise HTTPException(status_code=400, detail="Нельзя сканировать свой собственный стикер")
+                    
+                existing_scan = await self.session.execute(
+                    select(UserStickerScan).where(
+                        UserStickerScan.user_id == current_user.id,
+                        UserStickerScan.sticker_id == ugc_sticker.id
+                    )
+                )
+                if existing_scan.scalar_one_or_none():
+                    return ScanClaimResponse(
+                        status="already_collected",
+                        item=None,
+                        validation=None,
+                        rewards=[],
+                        user=self._build_frontend_user(user),
+                        claimed_at=datetime.now(UTC),
+                    )
+                    
+                # UGC logic
+                scan = UserStickerScan(user_id=current_user.id, sticker_id=ugc_sticker.id)
+                self.session.add(scan)
+                
+                ugc_sticker.scan_count += 1
+                
+                scanner_xp = 50
+                scanner_coins = 5
+                
+                creator_xp = 25
+                creator_coins = 2
+                
+                claimed_at = datetime.now(UTC)
+                
+                # Creator gets passive income
+                from app.db.models.system_events import OutboxEvent
+                from app.core.logger import request_id_ctx
+                
+                outbox_event_passive = OutboxEvent(
+                    event_type="ugc_passive_income",
+                    payload={
+                        "event_id": f"ugc_income_{ugc_sticker.id}_{current_user.id}",
+                        "creator_id": ugc_sticker.user_id,
+                        "scanner_id": current_user.id,
+                        "reward_xp": creator_xp,
+                        "reward_coins": creator_coins,
+                        "sticker_id": ugc_sticker.id,
+                        "request_id": request_id_ctx.get(),
+                    }
+                )
+                self.session.add(outbox_event_passive)
+                
+                # Scanner gets active rewards
+                outbox_event_active = OutboxEvent(
+                    event_type="scan_claimed",
+                    payload={
+                        "event_id": f"scan_ugc_{current_user.id}_{ugc_sticker.id}",
+                        "user_id": current_user.id,
+                        "scan_id": f"ugc_{ugc_sticker.id}",
+                        "reward_xp": scanner_xp,
+                        "reward_coins": scanner_coins,
+                        "rarity": "common",
+                        "claimed_at": claimed_at.isoformat(),
+                        "request_id": request_id_ctx.get(),
+                    }
+                )
+                self.session.add(outbox_event_active)
+                
+                await self.session.commit()
+                
+                frontend_user = self._build_frontend_user(user)
+                frontend_user.xp += scanner_xp
+                frontend_user.coins += scanner_coins
+                
+                rewards = [
+                    {"type": "xp", "amount": scanner_xp, "name": "Опыт"},
+                    {"type": "coin", "amount": scanner_coins, "name": "Монеты"}
+                ]
+                
+                return ScanClaimResponse(
+                    status="claimed",
+                    item=None,
+                    validation=None,
+                    rewards=rewards,
+                    user=frontend_user,
+                    claimed_at=claimed_at,
+                )
+            
             raise ScanNotFoundError()
+
+        from datetime import datetime, timedelta, UTC
+        now_utc = datetime.now(UTC)
+        if item_secret.cooldown_until is not None and item_secret.cooldown_until > now_utc:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="QR_ON_COOLDOWN")
 
         catalog_row = await items_service.item_service.get_active_catalog_item(item_secret.item_id)
         if catalog_row is None:
@@ -315,7 +431,7 @@ class FrontendDataBusinessService(BusinessService):
                 status="already_collected",
                 item=item_response,
                 validation=items_service._build_validation_short_response(existing_validation),
-                xp=0,
+                rewards=[],
                 user=self._build_frontend_user(user),
                 claimed_at=existing_validation.created_at,
             )
@@ -339,16 +455,67 @@ class FrontendDataBusinessService(BusinessService):
         )
 
         claimed_at = datetime.now(UTC)
-        reward_xp = item_secret.reward_xp
+        
+        import random
+        base_xp = item_secret.reward_xp
+        reward_xp = base_xp
+        reward_coins = 0
 
-        if reward_xp > 0:
-            await self.xp_event_service.create_scan_claim_event(
-                user_id=user.id,
-                scan_id=str(item_secret.id),
-                reward_xp=reward_xp,
-                occurred_at=claimed_at,
-                color=self._get_color_for_rarity(item_secret.rarity),
-            )
+        rarity_val = item_secret.rarity.value if hasattr(item_secret.rarity, "value") else item_secret.rarity
+        
+        if rarity_val == "mythic":
+            reward_xp = base_xp * 5
+            reward_coins = random.randint(50, 100)
+        elif rarity_val == "legendary":
+            reward_xp = base_xp * 3
+            reward_coins = random.randint(20, 50)
+        elif rarity_val == "epic":
+            reward_xp = base_xp * 2
+            if random.random() < 0.5:
+                reward_coins = random.randint(10, 20)
+        elif rarity_val == "rare":
+            reward_xp = int(base_xp * 1.5)
+            if random.random() < 0.2:
+                reward_coins = random.randint(5, 10)
+
+        reward_fragment_amount = 0
+        reward_fragment_rarity = rarity_val
+        if rarity_val == "mythic":
+            reward_fragment_amount = random.randint(2, 3)
+        elif rarity_val == "legendary":
+            reward_fragment_amount = random.randint(1, 2)
+        elif rarity_val == "epic":
+            reward_fragment_amount = 1
+        elif rarity_val == "rare":
+            if random.random() < 0.5:
+                reward_fragment_amount = 1
+        elif rarity_val == "common":
+            if random.random() < 0.3:
+                reward_fragment_amount = 1
+
+        is_first_blood = False
+        if item_secret.validation_count == 0:
+            is_first_blood = True
+            reward_xp *= 5
+            if reward_coins > 0:
+                reward_coins *= 2
+
+        rewards = [{"type": "xp", "amount": reward_xp, "name": "Опыт"}]
+        if reward_coins > 0:
+            rewards.append({"type": "coin", "amount": reward_coins, "name": "Монеты"})
+        if reward_fragment_amount > 0:
+            rewards.append({"type": "fragment", "amount": reward_fragment_amount, "name": f"Осколок ({reward_fragment_rarity})", "rarity": reward_fragment_rarity})
+
+        if reward_xp > 0 or reward_coins > 0 or reward_fragment_amount > 0:
+            # Create XP Event only if there's XP (for history logging)
+            if reward_xp > 0:
+                await self.xp_event_service.create_scan_claim_event(
+                    user_id=user.id,
+                    scan_id=str(item_secret.id),
+                    reward_xp=reward_xp,
+                    occurred_at=claimed_at,
+                    color=self._get_color_for_rarity(item_secret.rarity),
+                )
 
             from app.db.models.system_events import OutboxEvent
             from app.core.logger import request_id_ctx
@@ -360,23 +527,36 @@ class FrontendDataBusinessService(BusinessService):
                     "user_id": user.id,
                     "scan_id": str(item_secret.id),
                     "reward_xp": reward_xp,
-                    "rarity": item_secret.rarity.value if hasattr(item_secret.rarity, "value") else item_secret.rarity,
+                    "reward_coins": reward_coins,
+                    "reward_fragment_amount": reward_fragment_amount,
+                    "reward_fragment_rarity": reward_fragment_rarity,
+                    "rarity": rarity_val,
                     "claimed_at": claimed_at.isoformat(),
                     "request_id": request_id_ctx.get(),
                 }
             )
             self.session.add(outbox_event)
 
+        item_secret.validation_count += 1
+        item_secret.cooldown_until = now_utc + timedelta(hours=24)
+
         await self.session.commit()
         
         frontend_user = self._build_frontend_user(user)
         frontend_user.xp += reward_xp
-
+        if reward_coins > 0:
+            frontend_user.coins += reward_coins
+        if reward_fragment_amount > 0:
+            frag_attr = f"fragments_{reward_fragment_rarity.lower()}"
+            if hasattr(frontend_user, frag_attr):
+                setattr(frontend_user, frag_attr, getattr(frontend_user, frag_attr) + reward_fragment_amount)
+            
         return ScanClaimResponse(
             status="claimed",
             item=item_response,
             validation=items_service._build_validation_short_response(validation),
-            xp=reward_xp,
+            rewards=rewards,
+            is_first_blood=is_first_blood,
             user=frontend_user,
             claimed_at=claimed_at,
         )
@@ -557,7 +737,7 @@ class FrontendDataBusinessService(BusinessService):
         return self._get_stable_nearby_coords(
             exact_coords,
             seed=f"{user_id}:{secret.id}:hidden-map-offset",
-            max_distance_meters=100,
+            max_distance_meters=50,
         )
 
     @staticmethod
@@ -599,9 +779,9 @@ class FrontendDataBusinessService(BusinessService):
             next_level_xp=user.next_level_xp or 1000,
             streak_days=user.streak_days,
             season=user.season_label or "",
-            coins=user.coins,
-            active_border_id=user.active_border_id,
-            active_bg_id=user.active_bg_id,
+            coins=getattr(user, "coins", 0),
+            active_border_id=getattr(user, "active_border_id", None),
+            active_bg_id=getattr(user, "active_bg_id", None),
         )
 
     def _build_active_event(self, event: Event | None) -> ActiveEventResponse | None:
@@ -658,6 +838,7 @@ class FrontendDataBusinessService(BusinessService):
             big=False if is_masked else secret.is_big,
             hint=True if is_masked else secret.has_hint,
             done=is_opened,
+            is_masked=is_masked,
             item_id=secret.item_id if is_opened else None,
         )
 
@@ -678,6 +859,7 @@ class FrontendDataBusinessService(BusinessService):
             rarity=self._get_public_secret_rarity(secret, is_masked=is_masked),
             distance=self._format_distance(distance_meters, uppercase=False),
             done=is_opened,
+            is_masked=is_masked,
             item_id=secret.item_id if is_opened else None,
         )
 
@@ -759,38 +941,10 @@ class FrontendDataBusinessService(BusinessService):
             ),
             ProfileLinkResponse(
                 icon="trophy",
-                title="Рейтинг",
-                subtitle=f"Место: {user.rank or '-'}",
-                color=UIColorToken.GOLD,
-                to="/leaderboard",
-            ),
-            ProfileLinkResponse(
-                icon="profile",
-                title="Друзья",
-                subtitle="Приглашай и получай XP",
-                color=UIColorToken.CYAN,
-                to="/friends",
-            ),
-            ProfileLinkResponse(
-                icon="gem",
-                title="Магазин",
-                subtitle="Трать коины на кастомизацию",
-                color=UIColorToken.PINK,
-                to="/shop",
-            ),
-            ProfileLinkResponse(
-                icon="gem",
                 title="Достижения",
                 subtitle=f"{achievement_unlocked} из {achievement_total}",
                 color=UIColorToken.GOLD,
                 to="/achievements",
-            ),
-            ProfileLinkResponse(
-                icon="layer",
-                title="Коллекции",
-                subtitle="Собранные наборы",
-                color=UIColorToken.PINK,
-                to="/collections",
             ),
             ProfileLinkResponse(
                 icon="map",

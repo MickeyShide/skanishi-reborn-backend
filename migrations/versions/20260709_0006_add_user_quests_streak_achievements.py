@@ -125,9 +125,10 @@ def upgrade() -> None:
         "streak_days",
         "quest_count",
         name="achievementconditiontype",
-        create_type=True,
+        create_type=False,
     )
-    achievement_condition_type.create(op.get_bind(), checkfirst=True)
+    op.execute("DROP TYPE IF EXISTS achievementconditiontype CASCADE")
+    op.execute("CREATE TYPE achievementconditiontype AS ENUM ('scan_count', 'xp_total', 'level_reached', 'collection_complete', 'streak_days', 'quest_count')")
 
     op.create_table(
         "achievement_conditions",

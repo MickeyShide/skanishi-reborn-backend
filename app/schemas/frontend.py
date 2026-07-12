@@ -26,6 +26,11 @@ class FrontendUserResponse(BaseModel):
     coins: int = Field(default=0, ge=0)
     active_border_id: int | None = Field(default=None, alias="activeBorderId")
     active_bg_id: int | None = Field(default=None, alias="activeBgId")
+    fragments_common: int = Field(default=0)
+    fragments_rare: int = Field(default=0)
+    fragments_epic: int = Field(default=0)
+    fragments_legendary: int = Field(default=0)
+    fragments_mythic: int = Field(default=0)
 
 
 class ActiveEventResponse(BaseModel):
@@ -64,6 +69,7 @@ class MapPinResponse(BaseModel):
     big: bool = False
     hint: bool = False
     done: bool = False
+    is_masked: bool = False
     item_id: int | None = Field(default=None, alias="itemId")
 
 
@@ -77,6 +83,7 @@ class NearbyPointResponse(BaseModel):
     rarity: Rarity
     distance: str = Field(min_length=1, max_length=32)
     done: bool
+    is_masked: bool = False
     item_id: int | None = Field(default=None, alias="itemId")
 
 
@@ -201,6 +208,12 @@ class FrontendAppStateResponse(BaseModel):
 from app.schemas.item import ItemFullResponse
 from app.schemas.validation import ValidationShortResponse
 
+class RewardItem(BaseModel):
+    type: Literal["xp", "coin", "fragment"]
+    amount: int
+    name: str = Field(min_length=1, max_length=64)
+    rarity: Rarity | str | None = None
+
 class ScanClaimRequest(BaseModel):
     token: str = Field(
         min_length=1,
@@ -213,6 +226,7 @@ class ScanClaimResponse(BaseModel):
     status: Literal["claimed", "already_collected"]
     item: ItemFullResponse | None = None
     validation: ValidationShortResponse | None = None
-    xp: int = Field(ge=0)
+    rewards: list[RewardItem] = Field(default_factory=list)
+    is_first_blood: bool = False
     user: FrontendUserResponse
     claimed_at: datetime | None = Field(default=None, alias="claimedAt")

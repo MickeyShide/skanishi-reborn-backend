@@ -165,6 +165,9 @@ class BusinessService:
 
         return self.session
 
+    async def _get_session(self) -> AsyncSession:
+        return await self._ensure_session()
+
     async def _close_owned_session(
         self,
         exc_type: type[BaseException] | None,

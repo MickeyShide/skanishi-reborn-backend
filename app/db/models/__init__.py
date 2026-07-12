@@ -17,6 +17,7 @@ from app.db.models.shop import ShopItem, UserCosmetic
 from app.db.models.system_events import OutboxEvent, ProcessedEvent
 from app.db.models.user import User, UserRole
 from app.db.models.user_quest import UserQuest
+from app.db.models.user_stickers import UserSticker, UserStickerScan
 from app.db.models.validation import Validation
 from app.db.models.xp_event import XpEvent
 
@@ -53,6 +54,8 @@ __all__ = [
     "UserQuest",
     "UserRole",
     "UserSeasonHistory",
+    "UserSticker",
+    "UserStickerScan",
     "Validation",
     "XpEvent",
 ]
