@@ -1,14 +1,14 @@
 from enum import StrEnum
 from sqlalchemy import BigInteger, Boolean, String, UniqueConstraint
 from sqlmodel import Field
-from app.db.models.base import SkanishiBase
+from app.db.models.base import BaseSQLModel
 
 class ShopItemType(StrEnum):
     BORDER = "border"
     BACKGROUND = "background"
     TITLE = "title"
 
-class ShopItem(SkanishiBase, table=True):
+class ShopItem(BaseSQLModel, table=True):
     __tablename__ = "shop_items"
 
     name: str = Field(sa_type=String(255), nullable=False)
@@ -22,7 +22,7 @@ class ShopItem(SkanishiBase, table=True):
     asset_url: str | None = Field(default=None, sa_type=String(1024), nullable=True)
 
 
-class UserCosmetic(SkanishiBase, table=True):
+class UserCosmetic(BaseSQLModel, table=True):
     __tablename__ = "user_cosmetics"
 
     user_id: int = Field(
