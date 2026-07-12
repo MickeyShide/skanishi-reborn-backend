@@ -70,7 +70,7 @@ QUESTS_DATA = [
     ("quest_shadows", "Тени Старого города", "1/5", 20, Rarity.RARE, 150),
     ("quest_artist", "Путь художника", "3/5", 60, Rarity.EPIC, 300),
     ("quest_secrets", "Тайны переулков", "0/4", 0, Rarity.COMMON, 100),
-    ("quest_nature", "Зеленое сердце столицы", "2/3", 66, Rarity.UNCOMMON, 200),
+    ("quest_nature", "Зеленое сердце столицы", "2/3", 66, Rarity.COMMON, 200),
     ("quest_legends", "Городские легенды", "1/4", 25, Rarity.MYTHIC, 500)
 ]
 
