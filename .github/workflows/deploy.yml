@@ -105,8 +105,10 @@ jobs:
           scp -i ~/.ssh/deploy_key \
             docker-compose.yml \
             docker-compose.migrations.yml \
-            .env.deploy \
             "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ vars.DEPLOY_PATH }}/"
+          scp -i ~/.ssh/deploy_key \
+            .env.deploy \
+            "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ vars.DEPLOY_PATH }}/.env.deploy.new"
 
       - name: Deploy on server
         shell: bash
@@ -114,6 +116,7 @@ jobs:
           ssh -T -i ~/.ssh/deploy_key "${{ vars.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'EOF'
           set -euxo pipefail
           cd '${{ vars.DEPLOY_PATH }}'
+          mv -f .env.deploy.new .env.deploy
           mv .env.deploy .env
           echo '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
           docker compose pull
