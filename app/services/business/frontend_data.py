@@ -599,6 +599,9 @@ class FrontendDataBusinessService(BusinessService):
             next_level_xp=user.next_level_xp or 1000,
             streak_days=user.streak_days,
             season=user.season_label or "",
+            coins=user.coins,
+            active_border_id=user.active_border_id,
+            active_bg_id=user.active_bg_id,
         )
 
     def _build_active_event(self, event: Event | None) -> ActiveEventResponse | None:
@@ -760,6 +763,20 @@ class FrontendDataBusinessService(BusinessService):
                 subtitle=f"Место: {user.rank or '-'}",
                 color=UIColorToken.GOLD,
                 to="/leaderboard",
+            ),
+            ProfileLinkResponse(
+                icon="profile",
+                title="Друзья",
+                subtitle="Приглашай и получай XP",
+                color=UIColorToken.CYAN,
+                to="/friends",
+            ),
+            ProfileLinkResponse(
+                icon="gem",
+                title="Магазин",
+                subtitle="Трать коины на кастомизацию",
+                color=UIColorToken.PINK,
+                to="/shop",
             ),
             ProfileLinkResponse(
                 icon="gem",

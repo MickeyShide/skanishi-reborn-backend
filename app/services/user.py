@@ -41,6 +41,7 @@ class UserService(BaseService):
     async def create_from_telegram(
         self,
         telegram_user: TelegramUserData,
+        referred_by_id: int | None = None,
     ) -> User:
         return await self.user_repository.create(
             tg_id=telegram_user.tg_id,
@@ -52,6 +53,7 @@ class UserService(BaseService):
             is_private=True,
             role=UserRole.USER,
             next_level_xp=get_next_level_xp(1),
+            referred_by_id=referred_by_id,
         )
 
     async def update_telegram_fields(
@@ -71,16 +73,20 @@ class UserService(BaseService):
     async def get_or_create_from_telegram(
         self,
         telegram_user: TelegramUserData,
-    ) -> User:
+        referred_by_id: int | None = None,
+    ) -> tuple[User, bool]:
+        """Returns tuple (User, is_new)"""
         user = await self.get_user_by_tg_id(telegram_user.tg_id)
 
         if user is None:
-            return await self.create_from_telegram(telegram_user)
+            new_user = await self.create_from_telegram(telegram_user, referred_by_id=referred_by_id)
+            return new_user, True
 
-        return await self.update_telegram_fields(
+        updated_user = await self.update_telegram_fields(
             user=user,
             telegram_user=telegram_user,
         )
+        return updated_user, False
 
     async def update_privacy(
         self,
@@ -103,6 +109,7 @@ class UserService(BaseService):
 
     async def add_xp_and_check_level_up(self, user: User, added_xp: int) -> User:
         new_xp = user.xp + added_xp
+        new_coins = user.coins + max(1, added_xp // 2) # 1 coin per 2 XP
         new_level = user.level
         next_level_xp = user.next_level_xp or get_next_level_xp(new_level)
 
@@ -115,6 +122,7 @@ class UserService(BaseService):
         return await self.user_repository.update(
             user,
             xp=new_xp,
+            coins=new_coins,
             level=new_level,
             next_level_xp=next_level_xp,
             level_progress=level_progress,

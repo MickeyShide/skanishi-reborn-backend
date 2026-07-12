@@ -6,6 +6,7 @@ from app.db.models.event import Event
 from app.db.models.collection import Collection
 from app.db.models.achievement import Achievement
 from app.db.models.season import Season
+from app.db.models.shop import ShopItem, UserCosmetic
 
 class UserAdmin(ModelView, model=User):
     column_list = [User.id, User.tg_id, User.username, User.role, User.level, User.xp, User.is_private]
@@ -38,6 +39,13 @@ class SeasonAdmin(ModelView, model=Season):
     column_list = [Season.id, Season.name, Season.is_active, Season.starts_at, Season.ends_at]
     column_searchable_list = [Season.name]
 
+class ShopItemAdmin(ModelView, model=ShopItem):
+    column_list = [ShopItem.id, ShopItem.name, ShopItem.item_type, ShopItem.price, ShopItem.is_active]
+    column_searchable_list = [ShopItem.name, ShopItem.item_type]
+
+class UserCosmeticAdmin(ModelView, model=UserCosmetic):
+    column_list = [UserCosmetic.id, UserCosmetic.user_id, UserCosmetic.shop_item_id]
+
 admin_views = [
     UserAdmin,
     QuestAdmin,
@@ -46,4 +54,6 @@ admin_views = [
     CollectionAdmin,
     AchievementAdmin,
     SeasonAdmin,
+    ShopItemAdmin,
+    UserCosmeticAdmin,
 ]

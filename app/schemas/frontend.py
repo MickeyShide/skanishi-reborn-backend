@@ -23,6 +23,9 @@ class FrontendUserResponse(BaseModel):
     next_level_xp: int = Field(alias="nextLevelXp", ge=0)
     streak_days: int = Field(alias="streakDays", ge=0)
     season: str = Field(default="")
+    coins: int = Field(default=0, ge=0)
+    active_border_id: int | None = Field(default=None, alias="activeBorderId")
+    active_bg_id: int | None = Field(default=None, alias="activeBgId")
 
 
 class ActiveEventResponse(BaseModel):

@@ -32,6 +32,7 @@ class TelegramUserData:
 class TelegramInitData:
     auth_date: int
     query_id: str | None
+    start_param: str | None
     user: TelegramUserData
     raw_hash: str
 
@@ -61,6 +62,7 @@ class TelegramInitDataService:
         return TelegramInitData(
             auth_date=auth_date,
             query_id=pairs.get("query_id"),
+            start_param=pairs.get("start_param"),
             user=user,
             raw_hash=received_hash,
         )

@@ -158,16 +158,48 @@ class AuthBusinessService(BusinessService):
             dto.tg_web_app_data,
         )
 
-        # 3. Найти или создать пользователя.
-        user = await self.user_service.get_or_create_from_telegram(
+        # 3. Parse referral ID if present
+        referred_by_id = None
+        if telegram_init_data.start_param and telegram_init_data.start_param.startswith("ref_"):
+            try:
+                referred_by_id = int(telegram_init_data.start_param.split("_")[1])
+            except (ValueError, IndexError):
+                pass
+
+        # 4. Найти или создать пользователя.
+        user, is_new = await self.user_service.get_or_create_from_telegram(
             telegram_init_data.user,
+            referred_by_id=referred_by_id
         )
 
-        # 4. Создать токены.
+        # 4.1. Если пользователь новый и был приглашен, выдаем награды
+        if is_new and user.referred_by_id:
+            from app.db.models.xp_event import XpEvent
+            # Награда приглашенному
+            user = await self.user_service.add_xp_and_check_level_up(user, 500)
+            self._session.add(XpEvent(user_id=user.id, source="referral_signup", xp_reward=500))
+            
+            # Награда пригласившему (получим и обновим)
+            referrer = await self.user_service.get_user_by_id(user.referred_by_id)
+            if referrer:
+                referrer = await self.user_service.add_xp_and_check_level_up(referrer, 1000)
+                self._session.add(XpEvent(user_id=referrer.id, source="referral_bonus", xp_reward=1000))
+                # Optional: Send SSE/Push to referrer via Outbox (not strictly required here for MVP)
+                from app.db.models.system_events import OutboxEvent
+                self._session.add(OutboxEvent(
+                    event_type="notification",
+                    payload={
+                        "user_id": referrer.id,
+                        "type": "referral_success",
+                        "data": {"bonus_xp": 1000, "friend_name": user.first_name}
+                    }
+                ))
+
+        # 5. Создать токены.
         access_token = self.token_service.create_access_token(user)
         refresh_token = self.token_service.create_refresh_token(user)
 
-        # 5. Сохранить refresh-сессию.
+        # 6. Сохранить refresh-сессию.
         await self.refresh_session_service.create_refresh_session(
             user_id=user.id,
             refresh_token=refresh_token,
@@ -178,7 +210,7 @@ class AuthBusinessService(BusinessService):
         set_refresh_cookie(response, refresh_token)
         set_csrf_cookie(response)
 
-        # 6. Наружу отдаём только access_token, refresh остается для cookie.
+        # 7. Наружу отдаём только access_token, refresh остается для cookie.
         return TokenResponse(
             access_token=access_token,
             expires_in=settings.ACCESS_TOKEN_TTL_SECONDS,

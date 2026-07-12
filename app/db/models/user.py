@@ -103,6 +103,16 @@ class User(BaseSQLModel, table=True):
         sa_column_kwargs={"server_default": "0"},
     )
     season_label: str | None = Field(default=None, sa_type=String(160), nullable=True)
+    referred_by_id: int | None = Field(
+        default=None,
+        nullable=True,
+        foreign_key="users.id",
+    )
+    
+    # Economy & Cosmetics
+    coins: int = Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"})
+    active_border_id: int | None = Field(default=None, foreign_key="shop_items.id", nullable=True)
+    active_bg_id: int | None = Field(default=None, foreign_key="shop_items.id", nullable=True)
 
     # ── Login / streak / daily tracking ──────────────────────────────────────
     last_login_at: datetime | None = Field(

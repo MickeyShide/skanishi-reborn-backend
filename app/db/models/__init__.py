@@ -13,6 +13,7 @@ from app.db.models.prototype import Prototype
 from app.db.models.quest import Quest
 from app.db.models.refresh_session import RefreshSession
 from app.db.models.season import Season, UserSeasonHistory
+from app.db.models.shop import ShopItem, UserCosmetic
 from app.db.models.system_events import OutboxEvent, ProcessedEvent
 from app.db.models.user import User, UserRole
 from app.db.models.user_quest import UserQuest
@@ -42,10 +43,12 @@ __all__ = [
     "Rarity",
     "RefreshSession",
     "Season",
+    "ShopItem",
     "UIColorToken",
     "User",
     "UserAchievement",
     "UserCollection",
+    "UserCosmetic",
     "UserEvent",
     "UserQuest",
     "UserRole",

@@ -1,0 +1,32 @@
+from fastapi import APIRouter
+from app.api.v1.dependencies import CurrentUser, DbSession
+from app.schemas.shop import ShopItemResponse, BuyItemRequest, EquipItemRequest
+from app.services.business.shop import ShopBusinessService
+
+router = APIRouter(prefix="/shop", tags=["Shop"])
+
+@router.get("", response_model=list[ShopItemResponse])
+async def get_shop_items(
+    current_user: CurrentUser,
+    session: DbSession,
+) -> list[ShopItemResponse]:
+    service = ShopBusinessService(session)
+    return await service.get_shop_items(current_user)
+
+@router.post("/{item_id}/buy", response_model=ShopItemResponse)
+async def buy_shop_item(
+    item_id: int,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> ShopItemResponse:
+    service = ShopBusinessService(session)
+    return await service.buy_item(current_user, item_id)
+
+@router.post("/{item_id}/equip", response_model=ShopItemResponse)
+async def equip_shop_item(
+    item_id: int,
+    current_user: CurrentUser,
+    session: DbSession,
+) -> ShopItemResponse:
+    service = ShopBusinessService(session)
+    return await service.equip_item(current_user, item_id)
