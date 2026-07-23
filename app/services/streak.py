@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
-
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import UTC, datetime, timedelta
 
 from app.db.models.user import User
+from app.db.repositories.user import UserRepository
 from app.services.base import BaseService
 
 
@@ -35,10 +34,9 @@ class StreakService(BaseService):
     last_login_at and potentially increment streak_days.
     """
 
-    repositories: dict = {}  # no custom repositories needed
+    repositories = {"user_repository": UserRepository}
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session)
+    user_repository: UserRepository
 
     async def record_login(self, user: User) -> User:
         """Record a login event and update the streak counter.
@@ -52,8 +50,9 @@ class StreakService(BaseService):
         today = now.date()
 
         # Normalise last_login_at to UTC date
-        if user.last_login_at is not None:
-            last_date = user.last_login_at.astimezone(UTC).date()
+        last_login_at = getattr(user, "last_login_at", None)
+        if last_login_at is not None:
+            last_date = last_login_at.astimezone(UTC).date()
         else:
             last_date = None
 
@@ -70,13 +69,12 @@ class StreakService(BaseService):
             # Gap or first ever login → start fresh
             new_streak = 1
 
-        user.last_login_at = now
-        user.streak_last_date = today
-        user.streak_days = new_streak
-
-        self.session.add(user)
-        # The caller (BusinessService) owns the commit.
-        return user
+        return await self.user_repository.update(
+            user,
+            last_login_at=now,
+            streak_last_date=today,
+            streak_days=new_streak,
+        )
 
     @staticmethod
     def is_streak_active(user: User) -> bool:

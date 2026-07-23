@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import select
 
 from app.db.models.item_secrets import ItemSecret
@@ -60,3 +62,15 @@ class ItemSecretRepository(BaseRepository[ItemSecret]):
         result = await self.session.execute(query)
 
         return result.scalar_one_or_none()
+
+    async def set_scan_cooldown(
+        self,
+        item_secret: ItemSecret,
+        *,
+        cooldown_until: datetime,
+    ) -> ItemSecret:
+        return await self.update(
+            item_secret,
+            validation_count=item_secret.validation_count + 1,
+            cooldown_until=cooldown_until,
+        )

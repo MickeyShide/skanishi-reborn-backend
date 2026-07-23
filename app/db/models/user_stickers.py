@@ -1,5 +1,4 @@
-from datetime import datetime
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text, CHAR
+from sqlalchemy import BigInteger, Column, ForeignKey, Index, String, UniqueConstraint, text
 from sqlmodel import Field
 
 from app.db.models.base import BaseSQLModel

@@ -7,7 +7,7 @@ from app.services.business.frontend_data import FrontendDataBusinessService
 router = APIRouter(prefix="/scan", tags=["Scan"])
 
 
-from app.api.v1.dependencies import CurrentUser, enforce_csrf_protection
+from app.api.v1.dependencies import enforce_csrf_protection
 from fastapi import Depends
 
 @router.post(

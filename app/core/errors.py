@@ -71,8 +71,7 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         """
-        Обработчик явных HTTPException, которые мы бросаем внутри сервисов/роутов
-        (например, raise HTTPException(status_code=401, detail="Invalid token")).
+        Обработчик HTTP-ошибок фреймворка и явных ошибок уровня роутов.
         """
         req_id = _get_request_id(request)
 

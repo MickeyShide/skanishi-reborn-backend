@@ -12,3 +12,6 @@ class QuestService(BaseService):
 
     async def get_active_quests(self) -> list[Quest]:
         return await self.quest_repository.get_active_quests()
+
+    async def get_quest(self, quest_id: str) -> Quest | None:
+        return await self.quest_repository.get_by_quest_id(quest_id)

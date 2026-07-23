@@ -3,10 +3,10 @@ import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
-from sqlalchemy.orm import selectinload
 
 from app.core.celery_app import celery_app
 from app.core.database import session_context
+from app.db.models.season import UserSeasonHistory
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ def close_active_season() -> None:
     then looks for the next season to activate.
     """
     async def _run() -> None:
-        from app.db.models.season import Season, UserSeasonHistory
+        from app.db.models.season import Season
         from app.db.models.user import User
 
         now = datetime.now(UTC)
@@ -100,4 +100,4 @@ def close_active_season() -> None:
             else:
                 logger.debug("No active season to close or season hasn't ended yet.")
 
-    asyncio.run(_run())
+    return asyncio.run(_run())

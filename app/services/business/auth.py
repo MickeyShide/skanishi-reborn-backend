@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import inspect
+from datetime import UTC, datetime
 import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from starlette.responses import Response
 
 from app.config import settings
 from app.core.redis_client import redis_client
+from app.db.models.enums import UIColorToken
 from app.db.repositories.errors import ObjectNotFoundError
 from app.schemas.auth import TelegramAuthRequest, TokenResponse
 from app.schemas.user import UserMe
@@ -28,6 +29,7 @@ from app.services.init_data_replay_guard import InitDataReplayGuardService
 from app.services.refresh_session import RefreshSessionService
 from app.services.token import TokenService
 from app.services.user import UserService
+from app.services.xp_event import XpEventService
 
 
 @dataclass(slots=True)
@@ -127,6 +129,7 @@ class AuthBusinessService(BusinessService):
     user_service: UserService
     token_service: TokenService
     refresh_session_service: RefreshSessionService
+    xp_event_service: XpEventService
 
     def __init__(self, session: AsyncSession | None = None) -> None:
         super().__init__(session)
@@ -169,52 +172,34 @@ class AuthBusinessService(BusinessService):
                 pass
 
         # 4. Найти или создать пользователя.
-        user_service_dict = getattr(self.user_service, "__dict__", {})
-        if "get_or_create_from_telegram_with_status" in user_service_dict:
-            if referred_by_id is None:
-                user, is_new = await self.user_service.get_or_create_from_telegram_with_status(
-                    telegram_init_data.user,
-                )
-            else:
-                user, is_new = await self.user_service.get_or_create_from_telegram_with_status(
-                    telegram_init_data.user,
-                    referred_by_id=referred_by_id,
-                )
-        else:
-            if referred_by_id is None:
-                legacy_result = self.user_service.get_or_create_from_telegram(
-                    telegram_init_data.user,
-                )
-            else:
-                legacy_result = self.user_service.get_or_create_from_telegram(
-                    telegram_init_data.user,
-                    referred_by_id=referred_by_id,
-                )
-            user = await legacy_result if inspect.isawaitable(legacy_result) else legacy_result
-            is_new = False
+        user, is_new = await self.user_service.get_or_create_from_telegram_with_status(
+            telegram_init_data.user,
+            referred_by_id=referred_by_id,
+        )
 
         # 4.1. Если пользователь новый и был приглашен, выдаем награды
         if is_new and user.referred_by_id:
-            from app.db.models.xp_event import XpEvent
-            # Награда приглашенному
             user = await self.user_service.add_xp_and_check_level_up(user, 500)
-            self._session.add(XpEvent(user_id=user.id, source="referral_signup", xp_reward=500))
-            
-            # Награда пригласившему (получим и обновим)
+            await self.xp_event_service.create_event(
+                user_id=user.id,
+                source="referral_signup",
+                tag="referral",
+                xp=500,
+                color=UIColorToken.GOLD,
+                occurred_at=datetime.now(UTC),
+            )
+
             referrer = await self.user_service.get_user_by_id(user.referred_by_id)
             if referrer:
-                referrer = await self.user_service.add_xp_and_check_level_up(referrer, 1000)
-                self._session.add(XpEvent(user_id=referrer.id, source="referral_bonus", xp_reward=1000))
-                # Optional: Send SSE/Push to referrer via Outbox (not strictly required here for MVP)
-                from app.db.models.system_events import OutboxEvent
-                self._session.add(OutboxEvent(
-                    event_type="notification",
-                    payload={
-                        "user_id": referrer.id,
-                        "type": "referral_success",
-                        "data": {"bonus_xp": 1000, "friend_name": user.first_name}
-                    }
-                ))
+                referrer = await self.user_service.add_xp_and_check_level_up(referrer, 500)
+                await self.xp_event_service.create_event(
+                    user_id=referrer.id,
+                    source="referral_bonus",
+                    tag="referral",
+                    xp=500,
+                    color=UIColorToken.GOLD,
+                    occurred_at=datetime.now(UTC),
+                )
 
         # 5. Создать токены.
         access_token = self.token_service.create_access_token(user)

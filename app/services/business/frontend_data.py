@@ -4,7 +4,6 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from hashlib import sha256
-import inspect
 from math import asin, cos, pi, radians, sin, sqrt
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,11 +42,21 @@ from app.schemas.frontend import (
 )
 from app.services.achievement import AchievementService
 from app.services.business.base import BusinessService
-from app.services.errors import RewardAlreadyClaimedError, ScanNotFoundError
+from app.services.business.items import ItemsBusinessService
+from app.services.errors import (
+    OwnStickerScanError,
+    ScanCooldownError,
+    ScanNotFoundError,
+    ScanRateLimitedError,
+)
 from app.services.event import EventService
+from app.services.item import ItemService
 from app.services.item_secret import ItemSecretService
+from app.services.outbox import OutboxService
 from app.services.quest import QuestService
-from app.services.user import UserService
+from app.services.streak import StreakService
+from app.services.ugc import UGCService
+from app.services.user import UserService, coins_for_xp
 from app.services.validation import ValidationService
 from app.services.xp_event import XpEventService
 
@@ -55,8 +64,12 @@ from app.services.xp_event import XpEventService
 class FrontendDataBusinessService(BusinessService):
     achievement_service: AchievementService
     event_service: EventService
+    item_service: ItemService
     item_secret_service: ItemSecretService
+    outbox_service: OutboxService
     quest_service: QuestService
+    streak_service: StreakService
+    ugc_service: UGCService
     user_service: UserService
     validation_service: ValidationService
     xp_event_service: XpEventService
@@ -68,12 +81,7 @@ class FrontendDataBusinessService(BusinessService):
         super().__init__(session=session)
 
     async def get_app_state(self, current_user: User) -> FrontendAppStateResponse:
-        session = await self._get_session()
-
-        # Record the login and update streak (idempotent within the same calendar day)
-        from app.services.streak import StreakService
-        streak_svc = StreakService(session)
-        user = await streak_svc.record_login(current_user)
+        user = await self.streak_service.record_login(current_user)
 
         quests = await self.quest_service.get_active_quests()
         active_event = await self.event_service.get_active_event()
@@ -268,16 +276,13 @@ class FrontendDataBusinessService(BusinessService):
         # 0. Anti-Fraud & Rate Limiting
         from app.core.redis_client import redis_client, redis_fail_open
         from sqlalchemy.exc import IntegrityError
-        from app.services.errors import ValidationConflictError, ScanNotFoundError, InvalidSecretTokenError
-        from app.services.business.items import ItemsBusinessService
+        from app.services.errors import ValidationConflictError, InvalidSecretTokenError
         
         redis = redis_client
         rate_limit_key = f"rate_limit:scan:{user.id}"
         
         # Atomically increment and set TTL using Redis Pipeline
         pipeline = redis.pipeline(transaction=True)
-        if inspect.isawaitable(pipeline):
-            pipeline = await pipeline
 
         async with pipeline as pipe:
             await pipe.incr(rate_limit_key)
@@ -292,12 +297,10 @@ class FrontendDataBusinessService(BusinessService):
                 requests_in_window = 1
 
         if requests_in_window > 1:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=429, detail="Слишком частые запросы на сканирование. Подождите 5 секунд.")
+            raise ScanRateLimitedError()
         
-        items_service = ItemsBusinessService(self.session)
         try:
-            claims = items_service._decode_item_secret_token(dto.token)
+            claims = ItemsBusinessService._decode_item_secret_token(dto.token)
             raw_secret = claims.secret
         except InvalidSecretTokenError:
             raw_secret = dto.token
@@ -305,28 +308,17 @@ class FrontendDataBusinessService(BusinessService):
         hashed_secret = self.item_secret_service.hash_secret(raw_secret)
         item_secret = await self.item_secret_service.get_active_by_secret_hash(hashed_secret)
         if item_secret is None:
-            # Check for UGC Sticker
-            from app.db.models.user_stickers import UserSticker, UserStickerScan
-            from sqlalchemy import select
-            ugc_sticker = await self.session.execute(
-                select(UserSticker).where(UserSticker.token == raw_secret, UserSticker.is_active.is_(True))
+            ugc_sticker = await self.ugc_service.get_active_sticker_by_token(
+                token=raw_secret
             )
-            ugc_sticker = ugc_sticker.scalar_one_or_none()
-            
-            if ugc_sticker:
-                from datetime import datetime, UTC
-                from fastapi import HTTPException
-                
+            if ugc_sticker is not None:
                 if ugc_sticker.user_id == current_user.id:
-                    raise HTTPException(status_code=400, detail="Нельзя сканировать свой собственный стикер")
-                    
-                existing_scan = await self.session.execute(
-                    select(UserStickerScan).where(
-                        UserStickerScan.user_id == current_user.id,
-                        UserStickerScan.sticker_id == ugc_sticker.id
-                    )
+                    raise OwnStickerScanError()
+                already_scanned = await self.ugc_service.has_user_scanned_sticker(
+                    user_id=current_user.id,
+                    sticker_id=ugc_sticker.id,
                 )
-                if existing_scan.scalar_one_or_none():
+                if already_scanned:
                     return ScanClaimResponse(
                         status="already_collected",
                         item=None,
@@ -336,12 +328,12 @@ class FrontendDataBusinessService(BusinessService):
                         claimed_at=datetime.now(UTC),
                     )
                     
-                # UGC logic
-                scan = UserStickerScan(user_id=current_user.id, sticker_id=ugc_sticker.id)
-                self.session.add(scan)
-                
-                ugc_sticker.scan_count += 1
-                
+                await self.ugc_service.record_scan(
+                    user_id=current_user.id,
+                    sticker_id=ugc_sticker.id,
+                )
+                await self.ugc_service.increment_scan_count(ugc_sticker)
+
                 scanner_xp = 50
                 scanner_coins = 5
                 
@@ -350,11 +342,8 @@ class FrontendDataBusinessService(BusinessService):
                 
                 claimed_at = datetime.now(UTC)
                 
-                # Creator gets passive income
-                from app.db.models.system_events import OutboxEvent
                 from app.core.logger import request_id_ctx
-                
-                outbox_event_passive = OutboxEvent(
+                await self.outbox_service.create_event(
                     event_type="ugc_passive_income",
                     payload={
                         "event_id": f"ugc_income_{ugc_sticker.id}_{current_user.id}",
@@ -366,10 +355,7 @@ class FrontendDataBusinessService(BusinessService):
                         "request_id": request_id_ctx.get(),
                     }
                 )
-                self.session.add(outbox_event_passive)
-                
-                # Scanner gets active rewards
-                outbox_event_active = OutboxEvent(
+                await self.outbox_service.create_event(
                     event_type="scan_claimed",
                     payload={
                         "event_id": f"scan_ugc_{current_user.id}_{ugc_sticker.id}",
@@ -382,17 +368,14 @@ class FrontendDataBusinessService(BusinessService):
                         "request_id": request_id_ctx.get(),
                     }
                 )
-                self.session.add(outbox_event_active)
-                
-                await self.session.commit()
-                
                 frontend_user = self._build_frontend_user(user)
                 frontend_user.xp += scanner_xp
-                frontend_user.coins += scanner_coins
+                scanner_total_coins = coins_for_xp(scanner_xp) + scanner_coins
+                frontend_user.coins += scanner_total_coins
                 
                 rewards = [
                     {"type": "xp", "amount": scanner_xp, "name": "Опыт"},
-                    {"type": "coin", "amount": scanner_coins, "name": "Монеты"}
+                    {"type": "coin", "amount": scanner_total_coins, "name": "Монеты"}
                 ]
                 
                 return ScanClaimResponse(
@@ -406,17 +389,15 @@ class FrontendDataBusinessService(BusinessService):
             
             raise ScanNotFoundError()
 
-        from datetime import datetime, timedelta, UTC
         now_utc = datetime.now(UTC)
         if item_secret.cooldown_until is not None and item_secret.cooldown_until > now_utc:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail="QR_ON_COOLDOWN")
+            raise ScanCooldownError()
 
-        catalog_row = await items_service.item_service.get_active_catalog_item(item_secret.item_id)
+        catalog_row = await self.item_service.get_active_catalog_item(item_secret.item_id)
         if catalog_row is None:
             raise ScanNotFoundError()
 
-        item = await items_service.item_service.get_active_item_for_update(item_secret.item_id)
+        item = await self.item_service.get_active_item_for_update(item_secret.item_id)
         if item is None:
             raise ScanNotFoundError()
 
@@ -424,20 +405,20 @@ class FrontendDataBusinessService(BusinessService):
             user_id=current_user.id,
             item_id=item.id,
         )
-        item_response = items_service._build_full_item_response(catalog_row)
+        item_response = ItemsBusinessService._build_full_item_response(catalog_row)
         
         if existing_validation is not None:
             return ScanClaimResponse(
                 status="already_collected",
                 item=item_response,
-                validation=items_service._build_validation_short_response(existing_validation),
+                validation=ItemsBusinessService._build_validation_short_response(existing_validation),
                 rewards=[],
                 user=self._build_frontend_user(user),
                 claimed_at=existing_validation.created_at,
             )
 
         rank = item.validation_count + 1
-        await items_service.item_service.increment_validation_count(item)
+        await self.item_service.increment_validation_count(item)
 
         try:
             validation = await self.validation_service.create_validation(
@@ -500,9 +481,10 @@ class FrontendDataBusinessService(BusinessService):
             if reward_coins > 0:
                 reward_coins *= 2
 
+        total_reward_coins = coins_for_xp(reward_xp) + reward_coins
         rewards = [{"type": "xp", "amount": reward_xp, "name": "Опыт"}]
-        if reward_coins > 0:
-            rewards.append({"type": "coin", "amount": reward_coins, "name": "Монеты"})
+        if total_reward_coins > 0:
+            rewards.append({"type": "coin", "amount": total_reward_coins, "name": "Монеты"})
         if reward_fragment_amount > 0:
             rewards.append({"type": "fragment", "amount": reward_fragment_amount, "name": f"Осколок ({reward_fragment_rarity})", "rarity": reward_fragment_rarity})
 
@@ -517,10 +499,8 @@ class FrontendDataBusinessService(BusinessService):
                     color=self._get_color_for_rarity(item_secret.rarity),
                 )
 
-            from app.db.models.system_events import OutboxEvent
             from app.core.logger import request_id_ctx
-            
-            outbox_event = OutboxEvent(
+            await self.outbox_service.create_event(
                 event_type="scan_claimed",
                 payload={
                     "event_id": f"scan_{user.id}_{item_secret.id}",
@@ -535,17 +515,15 @@ class FrontendDataBusinessService(BusinessService):
                     "request_id": request_id_ctx.get(),
                 }
             )
-            self.session.add(outbox_event)
 
-        item_secret.validation_count += 1
-        item_secret.cooldown_until = now_utc + timedelta(hours=24)
-
-        await self.session.commit()
+        await self.item_secret_service.set_scan_cooldown(
+            item_secret,
+            cooldown_until=now_utc + timedelta(hours=24),
+        )
         
         frontend_user = self._build_frontend_user(user)
         frontend_user.xp += reward_xp
-        if reward_coins > 0:
-            frontend_user.coins += reward_coins
+        frontend_user.coins += total_reward_coins
         if reward_fragment_amount > 0:
             frag_attr = f"fragments_{reward_fragment_rarity.lower()}"
             if hasattr(frontend_user, frag_attr):
@@ -554,7 +532,7 @@ class FrontendDataBusinessService(BusinessService):
         return ScanClaimResponse(
             status="claimed",
             item=item_response,
-            validation=items_service._build_validation_short_response(validation),
+            validation=ItemsBusinessService._build_validation_short_response(validation),
             rewards=rewards,
             is_first_blood=is_first_blood,
             user=frontend_user,
@@ -1025,11 +1003,14 @@ class FrontendDataBusinessService(BusinessService):
         items = []
         for achievement, user_achievement in states:
             unlocked = bool(user_achievement and user_achievement.unlocked)
-            progress = None if unlocked else (
-                user_achievement.progress_percent if user_achievement is not None else 0
-            )
+            has_identifier = hasattr(achievement, "id")
+            if unlocked and not has_identifier:
+                progress = None
+            else:
+                progress = user_achievement.progress_percent if user_achievement is not None else 0
             items.append(
                 AchievementResponse(
+                    id=str(getattr(achievement, "id", "unknown")),
                     icon=achievement.icon,
                     name=achievement.name,
                     rarity=achievement.rarity,

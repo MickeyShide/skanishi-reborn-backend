@@ -12,6 +12,7 @@ class Rarity(StrEnum):
 
 
 class UIColorToken(StrEnum):
+    RED = "red"
     CYAN = "cyan"
     VIOLET_HI = "violetHi"
     GOLD = "gold"

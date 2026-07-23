@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Index, Numeric, text
 from sqlalchemy import Enum as SAEnum
-from sqlmodel import Field, String, Text
+from sqlmodel import Field, String
 
 from app.db.models.base import BaseSQLModel
 

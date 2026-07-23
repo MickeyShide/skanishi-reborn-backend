@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.api.v1.dependencies import CurrentUser, enforce_csrf_protection
-from app.schemas.frontend import QuestCardResponse, QuestsResponse
+from app.schemas.frontend import QuestsResponse
 from app.services.business.daily_and_quests import DailyClaimResponse, UserQuestBusinessService
 from app.services.business.frontend_data import FrontendDataBusinessService
 

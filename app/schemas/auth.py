@@ -47,6 +47,7 @@ class AccessTokenClaims(BaseModel):
     """Claims access-token."""
 
     sub: str
+    id: int
     tg_id: int
     role: str
     token_type: Literal["access"]
@@ -58,6 +59,7 @@ class RefreshTokenClaims(BaseModel):
     """Claims refresh-token."""
 
     sub: str
+    id: int
     jti: str
     token_type: Literal["refresh"]
     iat: int

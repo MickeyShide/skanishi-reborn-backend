@@ -42,3 +42,14 @@ class ItemSecretService(BaseService):
         return await self.item_secret_repository.get_active_map_secret_by_id(
             secret_id
         )
+
+    async def set_scan_cooldown(
+        self,
+        item_secret: ItemSecret,
+        *,
+        cooldown_until: datetime,
+    ) -> ItemSecret:
+        return await self.item_secret_repository.set_scan_cooldown(
+            item_secret,
+            cooldown_until=cooldown_until,
+        )

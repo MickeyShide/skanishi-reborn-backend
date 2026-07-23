@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.redis_client import redis_client, redis_fail_open
 from app.db.models.user import User
 from app.schemas.profile import ValidationCountResponse
+from app.schemas.frontend import ProfileResponse
 from app.services.business.base import BusinessService
 from app.services.validation import ValidationService
 
@@ -44,6 +45,11 @@ class ProfileBusinessService(BusinessService):
         )
 
         return ValidationCountResponse(count=count)
+
+    async def get_profile(self, current_user: User) -> ProfileResponse:
+        from app.services.business.daily_and_quests import _build_user_response
+
+        return ProfileResponse(user=_build_user_response(current_user))
 
     @staticmethod
     def _parse_cached_count(value: str | None) -> int | None:

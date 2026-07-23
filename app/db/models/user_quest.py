@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Index, text
-from sqlmodel import Field, Integer, String
+from sqlmodel import Field, String
 
 from app.db.models.base import BaseSQLModel
 

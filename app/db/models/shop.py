@@ -1,12 +1,12 @@
 from enum import StrEnum
-from sqlalchemy import BigInteger, Boolean, String, UniqueConstraint
+from sqlalchemy import BigInteger, String, UniqueConstraint
 from sqlmodel import Field
 from app.db.models.base import BaseSQLModel
 
 class ShopItemType(StrEnum):
-    BORDER = "border"
-    BACKGROUND = "background"
-    TITLE = "title"
+    BORDER = "BORDER"
+    BACKGROUND = "BACKGROUND"
+    TITLE = "TITLE"
 
 class ShopItem(BaseSQLModel, table=True):
     __tablename__ = "shop_items"

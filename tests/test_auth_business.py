@@ -81,7 +81,9 @@ class AuthBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.init_data_replay_guard_service = MagicMock()
         service.init_data_replay_guard_service.ensure_not_replayed = AsyncMock()
         service.user_service = MagicMock()
-        service.user_service.get_or_create_from_telegram = AsyncMock(return_value=user)
+        service.user_service.get_or_create_from_telegram_with_status = AsyncMock(
+            return_value=(user, False)
+        )
         service.token_service = MagicMock()
         service.token_service.create_access_token.return_value = "access-token"
         service.token_service.create_refresh_token.return_value = "refresh-token"
@@ -108,8 +110,9 @@ class AuthBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.init_data_replay_guard_service.ensure_not_replayed.assert_awaited_once_with(
             "signed-init-data"
         )
-        service.user_service.get_or_create_from_telegram.assert_awaited_once_with(
-            telegram_user
+        service.user_service.get_or_create_from_telegram_with_status.assert_awaited_once_with(
+            telegram_user,
+            referred_by_id=None,
         )
         service.token_service.create_access_token.assert_called_once_with(user)
         service.token_service.create_refresh_token.assert_called_once_with(user)
@@ -126,6 +129,75 @@ class AuthBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         self.assertIn("refresh_token=refresh-token", response.headers["set-cookie"])
         self.assertIn("Path=/api/v1/auth/refresh", response.headers["set-cookie"])
 
+    async def test_authenticate_records_referral_rewards_with_valid_xp_events(
+        self,
+    ) -> None:
+        service = object.__new__(AuthBusinessService)
+        telegram_user = TelegramUserData(
+            tg_id=778,
+            first_name="New",
+            last_name=None,
+            username="new_user",
+            language_code="ru",
+            is_premium=False,
+            photo_url=None,
+        )
+        invited_user = SimpleNamespace(
+            id=3,
+            tg_id=778,
+            first_name="New",
+            last_name=None,
+            photo_url=None,
+            is_private=True,
+            username="new_user",
+            is_premium=False,
+            role=UserRole.USER,
+            referred_by_id=2,
+        )
+        referrer = SimpleNamespace(id=2, tg_id=777, role=UserRole.USER)
+        service.telegram_init_data_service = MagicMock()
+        service.telegram_init_data_service.validate_and_parse.return_value = SimpleNamespace(
+            user=telegram_user,
+            start_param="ref_2",
+        )
+        service.init_data_replay_guard_service = MagicMock()
+        service.init_data_replay_guard_service.ensure_not_replayed = AsyncMock()
+        service.user_service = MagicMock()
+        service.user_service.get_or_create_from_telegram_with_status = AsyncMock(
+            return_value=(invited_user, True)
+        )
+        service.user_service.get_user_by_id = AsyncMock(return_value=referrer)
+        service.user_service.add_xp_and_check_level_up = AsyncMock(
+            side_effect=[invited_user, referrer]
+        )
+        service.token_service = MagicMock()
+        service.token_service.create_access_token.return_value = "access-token"
+        service.token_service.create_refresh_token.return_value = "refresh-token"
+        service.refresh_session_service = MagicMock()
+        service.refresh_session_service.create_refresh_session = AsyncMock()
+        service.xp_event_service = MagicMock()
+        service.xp_event_service.create_event = AsyncMock()
+
+        with patch("app.services.business.auth.UserMe.model_validate", return_value=build_user()):
+            await AuthBusinessService.authenticate(
+                service,
+                dto=TelegramAuthRequest(tg_web_app_data="signed-init-data"),
+                request=SimpleNamespace(
+                    headers={}, client=SimpleNamespace(host="127.0.0.1")
+                ),
+                response=Response(),
+            )
+
+        self.assertEqual(service.xp_event_service.create_event.await_count, 2)
+        self.assertEqual(
+            [call.kwargs["user_id"] for call in service.xp_event_service.create_event.await_args_list],
+            [3, 2],
+        )
+        self.assertEqual(
+            [call.kwargs["tag"] for call in service.xp_event_service.create_event.await_args_list],
+            ["referral", "referral"],
+        )
+
     async def test_authenticate_sets_csrf_cookie_when_samesite_none(self) -> None:
         service = object.__new__(AuthBusinessService)
         telegram_user = TelegramUserData(tg_id=777, first_name="Mickey")
@@ -139,7 +211,9 @@ class AuthBusinessServiceScenarioTests(IsolatedAsyncioTestCase):
         service.init_data_replay_guard_service = MagicMock()
         service.init_data_replay_guard_service.ensure_not_replayed = AsyncMock()
         service.user_service = MagicMock()
-        service.user_service.get_or_create_from_telegram = AsyncMock(return_value=user)
+        service.user_service.get_or_create_from_telegram_with_status = AsyncMock(
+            return_value=(user, False)
+        )
         service.token_service = MagicMock()
         service.token_service.create_access_token.return_value = "access-token"
         service.token_service.create_refresh_token.return_value = "refresh-token"

@@ -4,9 +4,8 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
-from fastapi import HTTPException
-
 from app.api.v1 import ugc
+from app.services.errors import StickerAlreadyExistsError, StickerNotFoundError
 
 
 class UgcApiTests(IsolatedAsyncioTestCase):
@@ -32,9 +31,9 @@ class UgcApiTests(IsolatedAsyncioTestCase):
 
     async def test_get_my_sticker_maps_not_found_error(self) -> None:
         service = AsyncMock()
-        service.get_my_sticker.side_effect = ValueError("sticker_not_found")
+        service.get_my_sticker.side_effect = StickerNotFoundError()
 
-        with self.assertRaises(HTTPException) as exc_info:
+        with self.assertRaises(StickerNotFoundError) as exc_info:
             await ugc.get_my_sticker(
                 current_user=SimpleNamespace(id=1),
                 service=service,
@@ -62,11 +61,9 @@ class UgcApiTests(IsolatedAsyncioTestCase):
 
     async def test_generate_my_sticker_maps_duplicate_error(self) -> None:
         service = AsyncMock()
-        service.generate_my_sticker.side_effect = ValueError(
-            "sticker_already_exists"
-        )
+        service.generate_my_sticker.side_effect = StickerAlreadyExistsError()
 
-        with self.assertRaises(HTTPException) as exc_info:
+        with self.assertRaises(StickerAlreadyExistsError) as exc_info:
             await ugc.generate_my_sticker(
                 current_user=SimpleNamespace(id=1),
                 service=service,

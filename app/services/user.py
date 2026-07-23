@@ -25,6 +25,10 @@ def get_next_level_xp(level: int) -> int:
     return LEVEL_THRESHOLDS.get(level, level * 15000 + 1000)
 
 
+def coins_for_xp(added_xp: int) -> int:
+    return max(1, added_xp // 2) if added_xp > 0 else 0
+
+
 class UserService(BaseService):
     repositories = {
         "user_repository": UserRepository,
@@ -35,8 +39,42 @@ class UserService(BaseService):
     async def get_user_by_id(self, user_id: int) -> User:
         return await self.user_repository.get_by_id(user_id)
 
+    async def add_fragment(self, user: User, rarity: str, amount: int) -> User:
+        field = f"fragments_{rarity.lower()}"
+        if not hasattr(user, field):
+            return user
+        return await self.user_repository.update(
+            user,
+            **{field: getattr(user, field) + amount},
+        )
+
     async def get_user_by_tg_id(self, tg_id: int) -> User | None:
         return await self.user_repository.get_one_or_none(tg_id=tg_id)
+
+    async def get_referral_contacts(
+        self,
+        *,
+        referrer_id: int,
+        limit: int,
+    ) -> list[tuple[str | None, str | None]]:
+        return await self.user_repository.get_referral_contacts(
+            referrer_id=referrer_id,
+            limit=limit,
+        )
+
+    async def get_public_leaderboard(
+        self,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[User]:
+        return await self.user_repository.get_public_leaderboard(
+            limit=limit,
+            offset=offset,
+        )
+
+    async def update_fields(self, user: User, **updates: object) -> User:
+        return await self.user_repository.update(user, **updates)
 
     async def create_from_telegram(
         self,
@@ -118,12 +156,16 @@ class UserService(BaseService):
     ) -> User:
         return await self.add_xp_and_check_level_up(user, reward_xp)
 
-    async def add_xp_and_check_level_up(self, user: User, added_xp: int) -> User:
+    async def add_xp_and_check_level_up(
+        self,
+        user: User,
+        added_xp: int,
+    ) -> User:
         new_xp = user.xp + added_xp
         current_coins = getattr(user, "coins", 0)
-        new_coins = current_coins + max(1, added_xp // 2) if added_xp > 0 else current_coins
+        new_coins = current_coins + coins_for_xp(added_xp)
         new_level = user.level
-        next_level_xp = user.next_level_xp or get_next_level_xp(new_level)
+        next_level_xp = getattr(user, "next_level_xp", None) or get_next_level_xp(new_level)
 
         while new_xp >= next_level_xp:
             new_level += 1
@@ -131,11 +173,11 @@ class UserService(BaseService):
 
         level_progress = min(100, int((new_xp / next_level_xp) * 100)) if next_level_xp > 0 else 0
 
-        return await self.user_repository.update(
-            user,
-            xp=new_xp,
-            coins=new_coins,
-            level=new_level,
-            next_level_xp=next_level_xp,
-            level_progress=level_progress,
-        )
+        updates = {
+            "xp": new_xp,
+            "coins": new_coins,
+            "level": new_level,
+            "next_level_xp": next_level_xp,
+            "level_progress": level_progress,
+        }
+        return await self.user_repository.update(user, **updates)

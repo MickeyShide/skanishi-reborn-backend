@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
-from app.schemas.common import Id, PaginatedResponse
+from app.schemas.common import Id, PageMeta
 from app.schemas.item import ItemFullResponse
 from app.schemas.user import UserPublic
 
@@ -76,5 +76,8 @@ class RatingEntryResponse(BaseModel):
     )
 
 
-class ItemRatingResponse(PaginatedResponse[RatingEntryResponse]):
-    """Пагинированный рейтинг по предмету."""
+class ItemRatingResponse(BaseModel):
+    """Пагинированный рейтинг пользователей по конкретному item."""
+
+    items: list[RatingEntryResponse]
+    meta: PageMeta

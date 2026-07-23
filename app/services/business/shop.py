@@ -1,27 +1,29 @@
-from sqlalchemy import select
-from fastapi import HTTPException
-from app.db.models.shop import ShopItem, UserCosmetic, ShopItemType
+from app.db.models.shop import ShopItemType
 from app.db.models.user import User
 from app.services.business.base import BusinessService
 from app.schemas.shop import ShopItemResponse
+from app.services.errors import (
+    InsufficientCoinsError,
+    InsufficientFragmentsError,
+    InvalidFragmentRarityError,
+    ItemNotCraftableError,
+    ShopItemAlreadyOwnedError,
+    ShopItemNotFoundError,
+    ShopItemNotOwnedError,
+)
+from app.services.shop import ShopService
+from app.services.user import UserService
 
 class ShopBusinessService(BusinessService):
-    
-    async def get_shop_items(self, user: User) -> list[ShopItemResponse]:
-        session = await self._get_session()
+    shop_service: ShopService
+    user_service: UserService
 
-        # Get all active items
-        items_result = await session.execute(
-            select(ShopItem).where(ShopItem.is_active.is_(True))
+    async def get_shop_items(self, user: User) -> list[ShopItemResponse]:
+        items = await self.shop_service.get_active_items()
+        owned_ids = await self.shop_service.get_owned_item_ids(
+            user_id=user.id
         )
-        items = items_result.scalars().all()
-        
-        # Get user owned cosmetics
-        owned_result = await session.execute(
-            select(UserCosmetic.shop_item_id).where(UserCosmetic.user_id == user.id)
-        )
-        owned_ids = set(owned_result.scalars().all())
-        
+
         response = []
         for item in items:
             is_owned = item.id in owned_ids
@@ -47,30 +49,19 @@ class ShopBusinessService(BusinessService):
         return response
 
     async def buy_item(self, user: User, item_id: int) -> ShopItemResponse:
-        session = await self._get_session()
+        item = await self.shop_service.get_active_item(item_id)
+        if item is None:
+            raise ShopItemNotFoundError()
 
-        item = await session.get(ShopItem, item_id)
-        if not item or not item.is_active:
-            raise HTTPException(status_code=404, detail="Товар не найден")
-            
-        # Check if already owned
-        existing = await session.execute(
-            select(UserCosmetic)
-            .where(UserCosmetic.user_id == user.id, UserCosmetic.shop_item_id == item_id)
-        )
-        if existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Товар уже куплен")
-            
+        if await self.shop_service.is_owned(user_id=user.id, item_id=item_id):
+            raise ShopItemAlreadyOwnedError()
+
         if user.coins < item.price:
-            raise HTTPException(status_code=400, detail="Недостаточно монет")
-            
-        # Deduct coins and add to inventory
-        user.coins -= item.price
-        new_cosmetic = UserCosmetic(user_id=user.id, shop_item_id=item_id)
-        session.add(new_cosmetic)
-        
-        await session.flush()
-        
+            raise InsufficientCoinsError()
+
+        await self.user_service.update_fields(user, coins=user.coins - item.price)
+        await self.shop_service.grant_item(user_id=user.id, item_id=item_id)
+
         return ShopItemResponse(
             id=item.id,
             name=item.name,
@@ -84,37 +75,30 @@ class ShopBusinessService(BusinessService):
         )
 
     async def craft_item(self, user: User, item_id: int) -> ShopItemResponse:
-        session = await self._get_session()
-
-        item = await session.get(ShopItem, item_id)
-        if not item or not item.is_active:
-            raise HTTPException(status_code=404, detail="Товар не найден")
+        item = await self.shop_service.get_active_item(item_id)
+        if item is None:
+            raise ShopItemNotFoundError()
             
         if not item.fragment_cost or not item.fragment_rarity:
-            raise HTTPException(status_code=400, detail="Этот товар нельзя скрафтить")
+            raise ItemNotCraftableError()
             
-        existing = await session.execute(
-            select(UserCosmetic)
-            .where(UserCosmetic.user_id == user.id, UserCosmetic.shop_item_id == item_id)
-        )
-        if existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Товар уже куплен")
+        if await self.shop_service.is_owned(user_id=user.id, item_id=item_id):
+            raise ShopItemAlreadyOwnedError()
             
         frag_attr = f"fragments_{item.fragment_rarity.lower()}"
         if not hasattr(user, frag_attr):
-            raise HTTPException(status_code=400, detail="Неверная редкость осколков")
+            raise InvalidFragmentRarityError()
             
         current_fragments = getattr(user, frag_attr)
         if current_fragments < item.fragment_cost:
-            raise HTTPException(status_code=400, detail="Недостаточно осколков")
+            raise InsufficientFragmentsError()
             
-        setattr(user, frag_attr, current_fragments - item.fragment_cost)
-        
-        new_cosmetic = UserCosmetic(user_id=user.id, shop_item_id=item_id)
-        session.add(new_cosmetic)
-        
-        await session.flush()
-        
+        await self.user_service.update_fields(
+            user,
+            **{frag_attr: current_fragments - item.fragment_cost},
+        )
+        await self.shop_service.grant_item(user_id=user.id, item_id=item_id)
+
         return ShopItemResponse(
             id=item.id,
             name=item.name,
@@ -128,28 +112,18 @@ class ShopBusinessService(BusinessService):
         )
 
     async def equip_item(self, user: User, item_id: int) -> ShopItemResponse:
-        session = await self._get_session()
+        item = await self.shop_service.get_item(item_id)
+        if item is None:
+            raise ShopItemNotFoundError()
 
-        item = await session.get(ShopItem, item_id)
-        if not item:
-            raise HTTPException(status_code=404, detail="Товар не найден")
-            
-        # Verify ownership
-        existing = await session.execute(
-            select(UserCosmetic)
-            .where(UserCosmetic.user_id == user.id, UserCosmetic.shop_item_id == item_id)
-        )
-        if not existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Товар не куплен")
-            
-        # Equip
+        if not await self.shop_service.is_owned(user_id=user.id, item_id=item_id):
+            raise ShopItemNotOwnedError()
+
         if item.item_type == ShopItemType.BORDER:
-            user.active_border_id = item.id
+            await self.user_service.update_fields(user, active_border_id=item.id)
         elif item.item_type == ShopItemType.BACKGROUND:
-            user.active_bg_id = item.id
-            
-        await session.flush()
-        
+            await self.user_service.update_fields(user, active_bg_id=item.id)
+
         return ShopItemResponse(
             id=item.id,
             name=item.name,

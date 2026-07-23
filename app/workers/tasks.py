@@ -74,7 +74,6 @@ def process_scan_claimed(self, payload: dict) -> None:
                 return
 
             old_level = user.level
-
             # 3. Apply XP and level-up logic
             logger.info(
                 "Applying +%s XP to user %s (current xp=%s).",
@@ -89,9 +88,11 @@ def process_scan_claimed(self, payload: dict) -> None:
 
             if reward_fragment_amount > 0 and reward_fragment_rarity:
                 logger.info("Adding +%s %s Fragments to user %s.", reward_fragment_amount, reward_fragment_rarity, user_id)
-                frag_attr = f"fragments_{reward_fragment_rarity.lower()}"
-                if hasattr(updated_user, frag_attr):
-                    setattr(updated_user, frag_attr, getattr(updated_user, frag_attr) + reward_fragment_amount)
+                await user_service.add_fragment(
+                    updated_user,
+                    reward_fragment_rarity,
+                    reward_fragment_amount,
+                )
 
             new_level = updated_user.level
 
@@ -154,10 +155,10 @@ def process_scan_claimed(self, payload: dict) -> None:
             )
 
     try:
-        asyncio.run(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("Error processing scan_claimed event %s: %s", event_id, exc)
-        raise self.retry(exc=exc, countdown=5)
+        raise self.retry(exc=exc, countdown=5) from exc
     finally:
         request_id_ctx.reset(token)
 
@@ -237,10 +238,10 @@ def process_ugc_passive_income(self, payload: dict) -> None:
             logger.warning("Redis publish failed for user %s: %s", creator_id, redis_exc)
 
     try:
-        asyncio.run(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("Error processing ugc_passive_income event %s: %s", event_id, exc)
-        raise self.retry(exc=exc, countdown=5)
+        raise self.retry(exc=exc, countdown=5) from exc
     finally:
         request_id_ctx.reset(token)
 
@@ -272,8 +273,8 @@ def send_notification(self, payload: dict) -> None:
             logger.warning("send_notification called without user_id; payload=%s", payload)
             return
 
-        channel = f"user_events:{user_id}"
-        message = json.dumps({"type": event_type, **data})
+        channel = f"sse:user:{user_id}"
+        message = json.dumps({"type": event_type, "data": data})
         try:
             await redis_client.publish(channel, message)
             logger.info("Notification '%s' sent to user %s.", event_type, user_id)
@@ -308,10 +309,10 @@ def send_notification(self, payload: dict) -> None:
                     await telegram_service.send_message(user.tg_id, text_msg)
 
     try:
-        asyncio.run(_run())
+        return asyncio.Runner().run(_run())
     except Exception as exc:
         logger.error("Error in send_notification for user %s: %s", user_id, exc)
-        raise self.retry(exc=exc, countdown=5)
+        raise self.retry(exc=exc, countdown=5) from exc
     finally:
         request_id_ctx.reset(token)
 

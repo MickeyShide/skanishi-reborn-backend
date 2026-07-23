@@ -1,105 +1,72 @@
-"""Business services for daily reward and quest progress.
-
-Both services follow the existing BusinessService pattern:
-  - Lazy session from `_get_session()`
-  - No explicit commits (caller / BusinessService base handles lifecycle)
-"""
+"""Business scenarios for daily rewards and user quest progress."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from pydantic import BaseModel
+
 from app.db.models.enums import UIColorToken
 from app.db.models.user import User
-from app.db.models.user_quest import UserQuest
 from app.schemas.frontend import FrontendUserResponse, QuestCardResponse
 from app.services.business.base import BusinessService
-from app.services.daily_reward import DailyRewardService
+from app.services.daily_reward import DailyRewardService, _xp_for_day
+from app.services.errors import ForbiddenError, ItemNotFoundError, RewardAlreadyClaimedError
 from app.services.quest import QuestService
-from app.services.streak import StreakService
+from app.services.streak import StreakService, get_streak_xp_multiplier
 from app.services.user import UserService
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Daily reward schemas (defined here to avoid circular imports)
-# ──────────────────────────────────────────────────────────────────────────────
-
-from pydantic import BaseModel
+from app.services.user_quest import UserQuestService
+from app.services.xp_event import XpEventService
 
 
 class DailyStatusResponse(BaseModel):
-    claimed_today: bool
-    current_streak: int
-    xp_reward: int        # XP available now (or already earned today)
-    next_reward_xp: int   # XP available tomorrow
-    streak_multiplier: float
+    claimed_today: bool = False
+    current_streak: int = 0
+    xp_reward: int = 0
+    next_reward_xp: int = 0
+    streak_multiplier: float = 1.0
+    is_available: bool | None = None
+    reward_xp: int | None = None
+    streak_days: int | None = None
 
 
 class DailyClaimResponse(BaseModel):
-    xp: int
-    current_streak: int
-    streak_multiplier: float
+    xp: int = 0
+    current_streak: int = 0
+    streak_multiplier: float = 1.0
     user: FrontendUserResponse
+    reward_xp: int | None = None
+    streak_days: int | None = None
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Daily Reward Business Service
-# ──────────────────────────────────────────────────────────────────────────────
 
 class DailyRewardBusinessService(BusinessService):
     """Orchestrates daily reward claim and status queries."""
 
+    daily_reward_service: DailyRewardService
+    streak_service: StreakService
     user_service: UserService
 
     async def get_daily_status(self, current_user: User) -> DailyStatusResponse:
-        from app.services.daily_reward import DailyRewardService, _xp_for_day
-        from app.services.streak import get_streak_xp_multiplier
-
-        session = await self._get_session()
-        daily_svc = DailyRewardService(session)
-        claimed = not daily_svc.can_claim(current_user)
+        claimed = not self.daily_reward_service.can_claim(current_user)
         streak = current_user.streak_days or 0
-
-        if claimed:
-            xp_today = _xp_for_day(streak)
-        else:
-            xp_today = _xp_for_day(max(streak + 1, 1))
+        xp_today = _xp_for_day(streak if claimed else max(streak + 1, 1))
 
         return DailyStatusResponse(
             claimed_today=claimed,
             current_streak=streak,
             xp_reward=xp_today,
-            next_reward_xp=daily_svc.next_reward_xp(current_user),
+            next_reward_xp=self.daily_reward_service.next_reward_xp(current_user),
             streak_multiplier=get_streak_xp_multiplier(streak),
         )
 
     async def claim_daily_reward(self, current_user: User) -> DailyClaimResponse:
-        from app.services.daily_reward import DailyRewardService
-        from app.services.errors import RewardAlreadyClaimedError
-        from app.services.streak import StreakService, get_streak_xp_multiplier
-
-        session = await self._get_session()
-
-        # 1. Update streak first (so daily XP uses the new streak day)
-        streak_svc = StreakService(session)
-        user = await streak_svc.record_login(current_user)
-
-        # 2. Claim daily reward
-        daily_svc = DailyRewardService(session)
-        if not daily_svc.can_claim(user):
+        user = await self.streak_service.record_login(current_user)
+        if not self.daily_reward_service.can_claim(user):
             raise RewardAlreadyClaimedError("Daily reward already claimed today.")
 
-        xp, _ = await daily_svc.claim(user)
-
-        # 3. Apply XP to user.xp (also triggers level up check)
-        user_svc = UserService(session)
-        updated_user = await user_svc.add_xp_and_check_level_up(user, 0)
-        # Note: DailyRewardService.claim() already added xp to user.xp,
-        # so we pass 0 to only run the level-up check without double-adding.
-
+        xp, _ = await self.daily_reward_service.claim(user)
+        updated_user = await self.user_service.add_xp_and_check_level_up(user, xp)
         streak = updated_user.streak_days or 0
-
-        from app.schemas.frontend import FrontendUserResponse
 
         return DailyClaimResponse(
             xp=xp,
@@ -110,7 +77,6 @@ class DailyRewardBusinessService(BusinessService):
 
 
 def _build_user_response(user: User) -> FrontendUserResponse:
-    """Quick helper to build a FrontendUserResponse from a User ORM object."""
     return FrontendUserResponse(
         name=user.display_name or user.first_name,
         username=user.username or user.public_id or f"user{user.id}",
@@ -128,45 +94,32 @@ def _build_user_response(user: User) -> FrontendUserResponse:
     )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# UserQuest Business Service
-# ──────────────────────────────────────────────────────────────────────────────
-
 class UserQuestBusinessService(BusinessService):
     """Handles per-user quest progress and reward claiming."""
 
     user_service: UserService
     quest_service: QuestService
+    user_quest_service: UserQuestService
+    xp_event_service: XpEventService
 
     async def get_user_quests(self, current_user: User) -> list[QuestCardResponse]:
-        """Return active quests with per-user progress injected."""
-        from sqlalchemy import select
-
-        session = await self._get_session()
         quests = await self.quest_service.get_active_quests()
-
-        # Bulk-load UserQuest rows for this user
-        from app.db.models.user_quest import UserQuest
-        uq_result = await session.execute(
-            select(UserQuest).where(
-                UserQuest.user_id == current_user.id,
-                UserQuest.quest_id.in_([q.id for q in quests]),
-            )
+        user_quests = await self.user_quest_service.get_for_user_and_quests(
+            user_id=current_user.id,
+            quest_ids=[quest.id for quest in quests],
         )
-        uq_by_id: dict[str, UserQuest] = {uq.quest_id: uq for uq in uq_result.scalars().all()}
+        quest_progress = {user_quest.quest_id: user_quest for user_quest in user_quests}
 
         cards: list[QuestCardResponse] = []
         for quest in quests:
-            uq = uq_by_id.get(quest.id)
-            progress = uq.progress if uq else 0
-            pct = min(100, int(progress / max(quest.target_count, 1) * 100))
-            step = f"{progress}/{quest.target_count}"
+            user_quest = quest_progress.get(quest.id)
+            progress = user_quest.progress if user_quest else 0
             cards.append(
                 QuestCardResponse(
                     id=quest.id,
                     name=quest.name,
-                    step=step,
-                    progress=pct,
+                    step=f"{progress}/{quest.target_count}",
+                    progress=min(100, int(progress / max(quest.target_count, 1) * 100)),
                     rarity=quest.rarity,
                     xp=quest.reward_xp,
                 )
@@ -174,62 +127,37 @@ class UserQuestBusinessService(BusinessService):
         return cards
 
     async def claim_quest_reward(
-        self, current_user: User, quest_id: str
+        self,
+        current_user: User,
+        quest_id: str,
     ) -> DailyClaimResponse:
-        from sqlalchemy import select
-
-        from app.db.models.user_quest import UserQuest
-        from app.services.errors import (
-            ItemNotFoundError,
-            RewardAlreadyClaimedError,
-            ForbiddenError,
+        user_quest = await self.user_quest_service.get_for_user_and_quest(
+            user_id=current_user.id,
+            quest_id=quest_id,
         )
-
-        session = await self._get_session()
-
-        # Load quest
-        result = await session.execute(
-            select(UserQuest).where(
-                UserQuest.user_id == current_user.id,
-                UserQuest.quest_id == quest_id,
-            )
-        )
-        uq: UserQuest | None = result.scalar_one_or_none()
-
-        if uq is None or uq.completed_at is None:
+        if user_quest is None or user_quest.completed_at is None:
             raise ForbiddenError("Quest not completed yet.")
-
-        if uq.reward_claimed:
+        if user_quest.reward_claimed:
             raise RewardAlreadyClaimedError("Quest reward already claimed.")
 
-        # Load quest definition for XP amount
-        from app.db.models.quest import Quest
-        quest_obj: Quest | None = await session.get(Quest, quest_id)
-        if quest_obj is None:
+        quest = await self.quest_service.get_quest(quest_id)
+        if quest is None:
             raise ItemNotFoundError(f"Quest {quest_id} not found.")
 
-        xp = quest_obj.reward_xp
-        source = f"quest:{current_user.id}:{quest_id}"
-
-        from app.db.models.xp_event import XpEvent
-        xp_event = XpEvent(
+        xp = quest.reward_xp
+        await self.xp_event_service.create_event(
             user_id=current_user.id,
             xp=xp,
-            source=source,
+            source=f"quest:{current_user.id}:{quest_id}",
             tag="quest",
             color=UIColorToken.VIOLET_HI,
             occurred_at=datetime.now(UTC),
         )
-        session.add(xp_event)
-
-        uq.reward_claimed = True
-        session.add(uq)
-
-        # Apply XP
-        user_svc = UserService(session)
-        updated_user = await user_svc.add_xp_and_check_level_up(current_user, xp)
-
-        from app.services.streak import get_streak_xp_multiplier
+        await self.user_quest_service.mark_reward_claimed(user_quest)
+        updated_user = await self.user_service.add_xp_and_check_level_up(
+            current_user,
+            xp,
+        )
         streak = updated_user.streak_days or 0
 
         return DailyClaimResponse(

@@ -1,13 +1,11 @@
-import asyncio
 import logging
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.redis_client import redis_client
-from app.db.models.user import User
-from app.api.v1.dependencies import get_current_user
+from app.api.v1.dependencies import StreamUser
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +45,6 @@ async def event_generator(request: Request, user_id: int) -> AsyncGenerator[dict
         await pubsub.unsubscribe(channel)
         await pubsub.close()
 
-from app.api.v1.dependencies import StreamUser
 
 @router.get("/events")
 async def sse_endpoint(

@@ -11,10 +11,16 @@ class AppServiceError(Exception):
         message: str | None = None,
         *,
         details: Any | None = None,
+        code: str | None = None,
+        status_code: int | None = None,
     ) -> None:
         super().__init__(message or self.message)
         self.message = message or self.message
         self.details = details
+        if code is not None:
+            self.code = code
+        if status_code is not None:
+            self.status_code = status_code
 
 
 class ServiceError(AppServiceError):
@@ -174,3 +180,74 @@ class RewardAlreadyClaimedError(BusinessError):
     status_code = 409
     code = "reward_already_claimed"
     message = "Reward was already claimed."
+
+
+class ScanRateLimitedError(BusinessError):
+    status_code = 429
+    code = "scan_rate_limited"
+    message = "Слишком частые запросы на сканирование. Подождите 5 секунд."
+
+
+class ScanCooldownError(BusinessError):
+    status_code = 400
+    code = "scan_on_cooldown"
+    message = "QR_ON_COOLDOWN"
+
+
+class OwnStickerScanError(BusinessError):
+    status_code = 400
+    code = "own_sticker_scan"
+    message = "Нельзя сканировать свой собственный стикер"
+
+
+class StickerNotFoundError(BusinessError):
+    status_code = 404
+    code = "sticker_not_found"
+    message = "Стикер не найден"
+
+
+class StickerAlreadyExistsError(BusinessError):
+    status_code = 400
+    code = "sticker_already_exists"
+    message = "Стикер уже сгенерирован"
+
+
+class ShopOperationError(BusinessError):
+    status_code = 400
+    code = "invalid_shop_operation"
+
+
+class ShopItemNotFoundError(ShopOperationError):
+    status_code = 404
+    code = "shop_item_not_found"
+    message = "Товар не найден"
+
+
+class ShopItemAlreadyOwnedError(ShopOperationError):
+    code = "shop_item_already_owned"
+    message = "Товар уже куплен"
+
+
+class InsufficientCoinsError(ShopOperationError):
+    code = "insufficient_coins"
+    message = "Недостаточно монет"
+
+
+class ItemNotCraftableError(ShopOperationError):
+    code = "item_not_craftable"
+    message = "Этот товар нельзя скрафтить"
+
+
+class InvalidFragmentRarityError(ShopOperationError):
+    code = "invalid_fragment_rarity"
+    message = "Неверная редкость осколков"
+
+
+class InsufficientFragmentsError(ShopOperationError):
+    code = "insufficient_fragments"
+    message = "Недостаточно осколков"
+
+
+class ShopItemNotOwnedError(ShopOperationError):
+    code = "shop_item_not_owned"
+    message = "Товар не куплен"

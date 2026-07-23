@@ -17,3 +17,6 @@ class QuestRepository(BaseRepository[Quest]):
         result = await self.session.execute(query)
 
         return list(result.scalars().all())
+
+    async def get_by_quest_id(self, quest_id: str) -> Quest | None:
+        return await self.get(quest_id)

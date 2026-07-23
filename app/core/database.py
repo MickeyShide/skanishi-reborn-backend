@@ -1,5 +1,5 @@
 import contextlib
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import exc as sa_exc

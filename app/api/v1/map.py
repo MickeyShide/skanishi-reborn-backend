@@ -9,7 +9,6 @@ from app.services.business.frontend_data import FrontendDataBusinessService
 
 router = APIRouter(prefix="/map", tags=["Map"])
 
-
 @router.get("/points", response_model=MapPointsResponse)
 async def get_map_points(
     current_user: CurrentUser,

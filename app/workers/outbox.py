@@ -29,6 +29,6 @@ def publish_outbox_events():
             await session.commit()
             
     try:
-        asyncio.run(_run())
+        return asyncio.run(_run())
     except Exception as e:
         logger.error(f"Error in publish_outbox_events task: {e}")

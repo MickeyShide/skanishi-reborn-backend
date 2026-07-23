@@ -253,8 +253,9 @@ class ItemsBusinessService(BusinessService):
 
 
 
-    def _decode_item_secret_token(self, raw_token: str) -> ItemSecretTokenClaims:
-        for candidate in self._get_secret_token_candidates(raw_token):
+    @staticmethod
+    def _decode_item_secret_token(raw_token: str) -> ItemSecretTokenClaims:
+        for candidate in ItemsBusinessService._get_secret_token_candidates(raw_token):
             try:
                 payload = jwt.decode(
                     candidate,
@@ -281,9 +282,10 @@ class ItemsBusinessService(BusinessService):
 
         raise InvalidSecretTokenError()
 
-    def _get_secret_token_candidates(self, raw_token: str) -> list[str]:
+    @staticmethod
+    def _get_secret_token_candidates(raw_token: str) -> list[str]:
         candidates = [raw_token]
-        decoded = self._decode_base64url(raw_token)
+        decoded = ItemsBusinessService._decode_base64url(raw_token)
         if decoded is not None and decoded not in candidates:
             candidates.append(decoded)
 
@@ -330,15 +332,16 @@ class ItemsBusinessService(BusinessService):
             prototype=self._build_prototype_response(prototype),
         )
 
-    def _build_full_item_response(self, row: ItemCatalogRow) -> ItemFullResponse:
+    @staticmethod
+    def _build_full_item_response(row: ItemCatalogRow) -> ItemFullResponse:
         item, category, prototype, item_type = row
         return ItemFullResponse(
             id=item.id,
             title=item.title,
             number=item.number,
-            type=self._build_item_type_response(item_type),
-            category=self._build_category_response(category),
-            prototype=self._build_prototype_response(prototype),
+            type=ItemsBusinessService._build_item_type_response(item_type),
+            category=ItemsBusinessService._build_category_response(category),
+            prototype=ItemsBusinessService._build_prototype_response(prototype),
         )
 
     @staticmethod

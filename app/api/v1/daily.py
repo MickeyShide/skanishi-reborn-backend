@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.api.v1.dependencies import CurrentUser, enforce_csrf_protection
-from app.db.models.user import User
 from app.services.business.daily_and_quests import (
     DailyClaimResponse,
     DailyRewardBusinessService,

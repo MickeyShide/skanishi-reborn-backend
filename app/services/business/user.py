@@ -7,6 +7,7 @@ from app.schemas.user import (
     UserPrivacySettingsResponse,
     UserPrivacySettingsUpdateRequest,
 )
+from app.schemas.frontend import FrontendUserResponse
 from app.services.business.base import BusinessService
 from app.services.user import UserService
 
@@ -24,6 +25,11 @@ class UserBusinessService(BusinessService):
         user = current_user
 
         return UserPrivacySettingsResponse(privacy=user.is_private)
+
+    async def get_me(self, current_user: User) -> FrontendUserResponse:
+        from app.services.business.daily_and_quests import _build_user_response
+
+        return _build_user_response(current_user)
 
     async def update_privacy_settings(
         self,

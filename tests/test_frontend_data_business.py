@@ -241,34 +241,44 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         service.validation_service = MagicMock()
         service.validation_service.get_user_item_validation = AsyncMock(return_value=None)
         service.validation_service.create_validation = AsyncMock(return_value=SimpleNamespace())
-        
-        service.session = MagicMock()
-        service.session.commit = AsyncMock()
-        
+        service.item_service = MagicMock()
+        service.item_service.get_active_catalog_item = AsyncMock(return_value=SimpleNamespace())
+        service.item_service.get_active_item_for_update = AsyncMock(
+            return_value=SimpleNamespace(id=1, validation_count=0)
+        )
+        service.item_service.increment_validation_count = AsyncMock()
+        service.item_secret_service.set_scan_cooldown = AsyncMock()
+        service.ugc_service = MagicMock()
+        service.ugc_service.get_active_sticker_by_token = AsyncMock(return_value=None)
+        service.outbox_service = MagicMock()
+        service.outbox_service.create_event = AsyncMock()
+
         from unittest.mock import ANY
         
         with (
             patch("app.core.redis_client.redis_client") as mock_redis,
             patch("app.core.redis_client.redis_fail_open", new_callable=AsyncMock),
-            patch("app.services.business.items.ItemsBusinessService") as MockItemsBusinessService,
+            patch(
+                "app.services.business.frontend_data.ItemsBusinessService._decode_item_secret_token",
+                return_value=SimpleNamespace(secret="raw"),
+            ),
+            patch(
+                "app.services.business.frontend_data.ItemsBusinessService._build_full_item_response",
+                return_value=ItemFullResponse.model_construct(),
+            ),
+            patch(
+                "app.services.business.frontend_data.ItemsBusinessService._build_validation_short_response",
+                return_value=ValidationShortResponse.model_construct(),
+            ),
         ):
-            mock_pipe = AsyncMock()
+            mock_pipe = MagicMock()
+            mock_pipe.__aenter__ = AsyncMock(return_value=mock_pipe)
+            mock_pipe.__aexit__ = AsyncMock(return_value=None)
+            mock_pipe.incr = AsyncMock()
+            mock_pipe.expire = AsyncMock()
             mock_pipe.execute.return_value = [1]
             mock_redis.pipeline = MagicMock(return_value=mock_pipe)
-            mock_pipe.__aenter__.return_value = mock_pipe
-            
-            mock_items_instance = MagicMock()
-            MockItemsBusinessService.return_value = mock_items_instance
-            mock_items_instance._decode_item_secret_token = MagicMock(return_value=SimpleNamespace(secret="raw"))
-            
-            mock_item_service = MagicMock()
-            mock_item_service.get_active_catalog_item = AsyncMock(return_value=SimpleNamespace())
-            mock_item_service.get_active_item_for_update = AsyncMock(return_value=SimpleNamespace(id=1, validation_count=0))
-            mock_item_service.increment_validation_count = AsyncMock()
-            mock_items_instance.item_service = mock_item_service
-            
-            mock_items_instance._build_full_item_response = MagicMock(return_value=ItemFullResponse.model_construct())
-            mock_items_instance._build_validation_short_response = MagicMock(return_value=ValidationShortResponse.model_construct())
+            mock_pipe.execute = AsyncMock(return_value=[1])
             
             result = await FrontendDataBusinessService.claim_scan_reward(
                 service,
@@ -305,27 +315,40 @@ class FrontendDataBusinessServiceTests(IsolatedAsyncioTestCase):
         service.validation_service = MagicMock()
         service.validation_service.get_user_item_validation = AsyncMock(return_value=SimpleNamespace(created_at=datetime.now(UTC)))
         service.validation_service.create_validation = AsyncMock()
-        
-        service.session = MagicMock()
-        service.session.commit = AsyncMock()
+        service.item_service = MagicMock()
+        service.item_service.get_active_catalog_item = AsyncMock(return_value=SimpleNamespace())
+        service.item_service.get_active_item_for_update = AsyncMock(
+            return_value=SimpleNamespace(id=1, validation_count=0)
+        )
+        service.item_secret_service.set_scan_cooldown = AsyncMock()
+        service.ugc_service = MagicMock()
+        service.ugc_service.get_active_sticker_by_token = AsyncMock(return_value=None)
+        service.outbox_service = MagicMock()
+        service.outbox_service.create_event = AsyncMock()
 
         with (
             patch("app.core.redis_client.redis_client") as mock_redis,
             patch("app.core.redis_client.redis_fail_open", new_callable=AsyncMock),
-            patch("app.services.business.items.ItemsBusinessService") as MockItemsBusinessService,
+            patch(
+                "app.services.business.frontend_data.ItemsBusinessService._decode_item_secret_token",
+                return_value=SimpleNamespace(secret="raw"),
+            ),
+            patch(
+                "app.services.business.frontend_data.ItemsBusinessService._build_full_item_response",
+                return_value=ItemFullResponse.model_construct(),
+            ),
+            patch(
+                "app.services.business.frontend_data.ItemsBusinessService._build_validation_short_response",
+                return_value=ValidationShortResponse.model_construct(),
+            ),
         ):
-            mock_items_instance = MagicMock()
-            MockItemsBusinessService.return_value = mock_items_instance
-            mock_items_instance._decode_item_secret_token = MagicMock(return_value=SimpleNamespace(secret="raw"))
-            
-            mock_item_service = MagicMock()
-            mock_item_service.get_active_catalog_item = AsyncMock(return_value=SimpleNamespace())
-            mock_item_service.get_active_item_for_update = AsyncMock(return_value=SimpleNamespace(id=1, validation_count=0))
-            mock_items_instance.item_service = mock_item_service
-            
-            mock_items_instance._build_full_item_response = MagicMock(return_value=ItemFullResponse.model_construct())
-            mock_items_instance._build_validation_short_response = MagicMock(return_value=ValidationShortResponse.model_construct())
-            
+            mock_pipe = MagicMock()
+            mock_pipe.__aenter__ = AsyncMock(return_value=mock_pipe)
+            mock_pipe.__aexit__ = AsyncMock(return_value=None)
+            mock_pipe.incr = AsyncMock()
+            mock_pipe.expire = AsyncMock()
+            mock_pipe.execute = AsyncMock(return_value=[1])
+            mock_redis.pipeline = MagicMock(return_value=mock_pipe)
             result = await FrontendDataBusinessService.claim_scan_reward(
                 service,
                 user,

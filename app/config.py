@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_TTL_SECONDS: int = Field(gt=0)
 
     BOT_TOKEN: str = Field(min_length=1)
+    TELEGRAM_BOT_USERNAME: str | None = None
     YANDEX_MAPS_API_KEY: str | None = None
     ADMIN_SECRET_KEY: str | None = None
 
@@ -75,9 +76,9 @@ class Settings(BaseSettings):
 
         return value
 
-    @field_validator("YANDEX_MAPS_API_KEY", mode="before")
+    @field_validator("YANDEX_MAPS_API_KEY", "TELEGRAM_BOT_USERNAME", mode="before")
     @classmethod
-    def parse_yandex_maps_api_key(cls, value: object) -> object:
+    def parse_optional_string(cls, value: object) -> object:
         if value == "":
             return None
 

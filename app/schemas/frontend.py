@@ -13,7 +13,8 @@ class FrontendUserResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    name: str = Field(min_length=1, max_length=160)
+    name: str = Field(default="", min_length=0, max_length=160)
+    display_name: str | None = None
     username: str = Field(min_length=1, max_length=64)
     id: str = Field(min_length=1, max_length=64)
     rank: int | None = Field(default=None, ge=1)
@@ -23,6 +24,7 @@ class FrontendUserResponse(BaseModel):
     next_level_xp: int = Field(alias="nextLevelXp", ge=0)
     streak_days: int = Field(alias="streakDays", ge=0)
     season: str = Field(default="")
+    season_label: str | None = None
     coins: int = Field(default=0, ge=0)
     active_border_id: int | None = Field(default=None, alias="activeBorderId")
     active_bg_id: int | None = Field(default=None, alias="activeBgId")
@@ -43,12 +45,20 @@ class ActiveEventResponse(BaseModel):
 
 
 class QuestCardResponse(BaseModel):
-    id: str = Field(min_length=1, max_length=96)
-    name: str = Field(min_length=1, max_length=160)
-    step: str = Field(min_length=1, max_length=80)
-    progress: int = Field(ge=0, le=100)
-    rarity: Rarity
-    xp: int = Field(ge=0)
+    id: str = Field(default="", max_length=96)
+    name: str = Field(default="", max_length=160)
+    step: str = Field(default="", max_length=80)
+    progress: int = Field(default=0, ge=0, le=100)
+    rarity: Rarity = Rarity.COMMON
+    xp: int = Field(default=0, ge=0)
+    title: str | None = None
+    description: str | None = None
+    reward_xp: int | None = None
+    reward_item_id: int | None = None
+    target_count: int | None = None
+    current_progress: int | None = None
+    is_completed: bool | None = None
+    reward_claimed: bool | None = None
 
 
 class RecentRewardResponse(BaseModel):
@@ -137,6 +147,7 @@ class XpWeekSummaryResponse(BaseModel):
 
 
 class AchievementResponse(BaseModel):
+    id: str = Field(default="unknown", max_length=96)
     icon: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=128)
     rarity: Rarity
@@ -161,7 +172,10 @@ class LatestAchievementResponse(BaseModel):
 
 class AchievementsResponse(BaseModel):
     items: list[AchievementResponse]
-    summary: AchievementSummaryResponse
+    summary: AchievementSummaryResponse = Field(
+        default_factory=lambda: AchievementSummaryResponse(unlocked=0, total=0)
+    )
+    total_earned: int | None = None
 
 
 class XpHistoryResponse(BaseModel):
@@ -205,6 +219,36 @@ class FrontendAppStateResponse(BaseModel):
     latest_achievement: LatestAchievementResponse | None = Field(default=None, alias="latestAchievement")
 
 
+class BaseItemResponse(BaseModel):
+    id: int
+    name: str = ""
+    description: str = ""
+    type: str = ""
+    rarity: str = ""
+    image_url: str | None = None
+    required_fragments: int = 0
+
+
+class AppStateResponse(BaseModel):
+    season_id: str = ""
+    is_season_active: bool = False
+    unread_notifications_count: int = 0
+
+
+class ProfileResponse(BaseModel):
+    user: FrontendUserResponse
+    total_collections: int = 0
+    completed_collections: int = 0
+
+
+class XpHistoryRowResponse(BaseModel):
+    id: str
+    source: str
+    tag: str
+    xp: int
+    occurred_at: datetime
+
+
 from app.schemas.item import ItemFullResponse
 from app.schemas.validation import ValidationShortResponse
 
@@ -215,18 +259,19 @@ class RewardItem(BaseModel):
     rarity: Rarity | str | None = None
 
 class ScanClaimRequest(BaseModel):
-    token: str = Field(
-        min_length=1,
-        max_length=512,
-        description="Идентификатор QR-кода или StartApp токена",
-    )
+    token: str | None = Field(default=None, max_length=512)
+    event_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    item_tags: list[str] = Field(default_factory=list)
 
 
 class ScanClaimResponse(BaseModel):
-    status: Literal["claimed", "already_collected"]
+    status: Literal["claimed", "already_collected"] = "claimed"
     item: ItemFullResponse | None = None
     validation: ValidationShortResponse | None = None
     rewards: list[RewardItem] = Field(default_factory=list)
     is_first_blood: bool = False
     user: FrontendUserResponse
     claimed_at: datetime | None = Field(default=None, alias="claimedAt")
+    scanned_items: list[object] = Field(default_factory=list)

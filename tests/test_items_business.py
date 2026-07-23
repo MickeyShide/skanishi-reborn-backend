@@ -300,9 +300,7 @@ class ItemsSecretTokenTests(IsolatedAsyncioTestCase):
         )
         wrapped_token = base64.urlsafe_b64encode(token.encode("utf-8")).decode("utf-8")
         wrapped_token = wrapped_token.rstrip("=")
-        service = object.__new__(ItemsBusinessService)
-
-        claims = ItemsBusinessService._decode_item_secret_token(service, wrapped_token)
+        claims = ItemsBusinessService._decode_item_secret_token(wrapped_token)
 
         self.assertEqual(claims.secret, "raw-secret")
 
@@ -318,10 +316,8 @@ class ItemsSecretTokenTests(IsolatedAsyncioTestCase):
             settings.SECRET_KEY,
             algorithm=settings.JWT_ALGORITHM,
         )
-        service = object.__new__(ItemsBusinessService)
-
         with self.assertRaises(InvalidSecretTypeError):
-            ItemsBusinessService._decode_item_secret_token(service, token)
+            ItemsBusinessService._decode_item_secret_token(token)
 
     async def test_missing_secret_is_reported(self) -> None:
         now = int(time.time())
@@ -334,7 +330,5 @@ class ItemsSecretTokenTests(IsolatedAsyncioTestCase):
             settings.SECRET_KEY,
             algorithm=settings.JWT_ALGORITHM,
         )
-        service = object.__new__(ItemsBusinessService)
-
         with self.assertRaises(MissingSecretError):
-            ItemsBusinessService._decode_item_secret_token(service, token)
+            ItemsBusinessService._decode_item_secret_token(token)

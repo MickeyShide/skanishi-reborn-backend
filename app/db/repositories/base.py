@@ -7,10 +7,9 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.base import BaseSQLModel
 from app.db.repositories.errors import ObjectNotFoundError, MultipleObjectsFoundError
 
-T = TypeVar("T", bound=BaseSQLModel)
+T = TypeVar("T")
 
 
 class BaseRepository(Generic[T], ABC):
@@ -45,6 +44,12 @@ class BaseRepository(Generic[T], ABC):
         await self.session.refresh(obj)
 
         return obj
+
+    async def get(self, object_id: Any) -> T | None:
+        result = await self.session.execute(
+            self._base_query().where(self.model.id == object_id)
+        )
+        return result.scalar_one_or_none()
 
     async def get_by_id(self, object_id: int) -> T:
         obj = await self.session.get(self.model, object_id)

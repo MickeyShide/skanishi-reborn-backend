@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.models.enums import UIColorToken
 from app.db.models.user import User
 from app.db.models.xp_event import XpEvent
+from app.db.repositories.user import UserRepository
+from app.db.repositories.xp_event import XpEventRepository
 from app.services.base import BaseService
+from app.services.errors import RewardAlreadyClaimedError
 
 # Daily reward XP by consecutive streak day (1-indexed).
 # Non-defined days use the FALLBACK value.
@@ -38,10 +39,13 @@ class DailyRewardService(BaseService):
     The caller is responsible for the final commit.
     """
 
-    repositories: dict = {}
+    repositories = {
+        "user_repository": UserRepository,
+        "xp_event_repository": XpEventRepository,
+    }
 
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session)
+    user_repository: UserRepository
+    xp_event_repository: XpEventRepository
 
     def can_claim(self, user: User) -> bool:
         """Return True if the user has not yet claimed today's daily reward."""
@@ -58,12 +62,12 @@ class DailyRewardService(BaseService):
         today = datetime.now(UTC).date()
 
         if user.last_daily_claimed_at == today:
-            raise ValueError("Daily reward already claimed today.")
+            raise RewardAlreadyClaimedError("Daily reward already claimed today.")
 
         xp = _xp_for_day(user.streak_days or 1)
         source = _daily_source(user.id, today)
 
-        xp_event = XpEvent(
+        xp_event = await self.xp_event_repository.create(
             user_id=user.id,
             xp=xp,
             source=source,
@@ -71,11 +75,7 @@ class DailyRewardService(BaseService):
             color=UIColorToken.GOLD,
             occurred_at=datetime.now(UTC),
         )
-        self.session.add(xp_event)
-
-        user.last_daily_claimed_at = today
-        user.xp = (user.xp or 0) + xp
-        self.session.add(user)
+        await self.user_repository.update(user, last_daily_claimed_at=today)
 
         return xp, xp_event
 

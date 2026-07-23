@@ -11,7 +11,6 @@ All workers are fully idempotent.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -20,8 +19,11 @@ from sqlalchemy import func, select
 
 from app.core.celery_app import celery_app
 from app.core.database import session_context
+from app.core.events import event_dispatcher
+from app.db.models.user_quest import UserQuest
 
 logger = logging.getLogger(__name__)
+UserQuestModel = UserQuest
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -29,7 +31,10 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 
 @celery_app.task(bind=True, max_retries=3, queue="progress.commands")
-def process_quest_progress(self, payload: dict) -> None:
+def process_quest_progress(
+    self,
+    payload: dict,
+) -> None:
     """Increment UserQuest.progress for all applicable active quests.
 
     A quest is applicable if:
@@ -48,8 +53,6 @@ def process_quest_progress(self, payload: dict) -> None:
 
     async def _run() -> None:
         from app.db.models.quest import Quest
-        from app.db.models.user_quest import UserQuest
-
         async with session_context() as session:
             # Load active quests that match this scan
             quests_result = await session.execute(
@@ -63,13 +66,12 @@ def process_quest_progress(self, payload: dict) -> None:
                 return
 
             quest_ids = [q.id for q in quests]
-            quests_by_id = {q.id: q for q in quests}
 
             # Load existing UserQuest rows (for update)
             uq_result = await session.execute(
-                select(UserQuest).where(
-                    UserQuest.user_id == user_id,
-                    UserQuest.quest_id.in_(quest_ids),
+                    select(UserQuestModel).where(
+                    UserQuestModel.user_id == user_id,
+                    UserQuestModel.quest_id.in_(quest_ids),
                 )
             )
             existing: dict[str, UserQuest] = {uq.quest_id: uq for uq in uq_result.scalars().all()}
@@ -96,8 +98,6 @@ def process_quest_progress(self, payload: dict) -> None:
 
         # Emit quest_completed outbox events for each newly completed quest
         if newly_completed:
-            from app.core.events import event_dispatcher
-
             for quest in newly_completed:
                 event_dispatcher.emit(
                     "quest_completed",
@@ -114,10 +114,10 @@ def process_quest_progress(self, payload: dict) -> None:
                 )
 
     try:
-        asyncio.run(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("Error in process_quest_progress for user %s: %s", user_id, exc)
-        raise self.retry(exc=exc, countdown=5)
+        raise self.retry(exc=exc, countdown=5) from exc
     finally:
         from app.core.logger import request_id_ctx as ctx
         ctx.reset(token)
@@ -295,8 +295,6 @@ def process_achievement_check(self, payload: dict) -> None:
 
         # Fire SSE notifications
         if newly_unlocked:
-            from app.core.events import event_dispatcher
-
             for achievement, xp in newly_unlocked:
                 event_dispatcher.emit(
                     "achievement_unlocked",
@@ -320,10 +318,13 @@ def process_achievement_check(self, payload: dict) -> None:
         asyncio.run(_run())
     except Exception as exc:
         logger.error("Error in process_achievement_check for user %s: %s", user_id, exc)
-        raise self.retry(exc=exc, countdown=5)
+        raise self.retry(exc=exc, countdown=5) from exc
     finally:
         from app.core.logger import request_id_ctx as ctx
         ctx.reset(token)
+
+
+process_achievement_progress = process_achievement_check
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -348,8 +349,6 @@ def process_collection_progress(self, payload: dict) -> None:
     async def _run() -> None:
         from app.db.models.collection import Collection, CollectionItem, UserCollection
         from app.db.models.validation import Validation
-        from app.db.models.enums import UIColorToken
-        from app.db.models.xp_event import XpEvent
 
         async with session_context() as session:
             # Only check collections that contain the just-awarded item
@@ -449,7 +448,7 @@ def process_collection_progress(self, payload: dict) -> None:
         asyncio.run(_run())
     except Exception as exc:
         logger.error("Error in process_collection_progress for user %s: %s", user_id, exc)
-        raise self.retry(exc=exc, countdown=5)
+        raise self.retry(exc=exc, countdown=5) from exc
     finally:
         from app.core.logger import request_id_ctx as ctx
         ctx.reset(token)

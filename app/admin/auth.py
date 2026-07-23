@@ -1,6 +1,8 @@
+import secrets
+
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
-from starlette.responses import RedirectResponse
+
 from app.config import settings
 
 
@@ -9,13 +11,14 @@ class AdminAuth(AuthenticationBackend):
         form = await request.form()
         username = form.get("username")
         password = form.get("password")
+        expected_secret = settings.ADMIN_SECRET_KEY
 
-        # Use the configured admin secret key
-        # In a real app, this should be checked securely
-        expected_secret = settings.ADMIN_SECRET_KEY or "admin"
-        
-        if username == "admin" and password == expected_secret:
-            request.session.update({"token": "admin_token"})
+        if (
+            expected_secret
+            and username == "admin"
+            and secrets.compare_digest(password or "", expected_secret)
+        ):
+            request.session.update({"authenticated": True})
             return True
         return False
 
@@ -24,9 +27,7 @@ class AdminAuth(AuthenticationBackend):
         return True
 
     async def authenticate(self, request: Request) -> bool:
-        token = request.session.get("token")
-        if not token:
-            return False
-        return True
+        return bool(request.session.get("authenticated"))
+
 
 authentication_backend = AdminAuth(secret_key=settings.SECRET_KEY)

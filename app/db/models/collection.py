@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, text
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey, Index, text
 from sqlmodel import Field, String, Text
 
 from app.db.models.base import BaseSQLModel, SlugSQLModel

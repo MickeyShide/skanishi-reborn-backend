@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, CheckConstraint, Column, ForeignKey, Index, Integer
+from sqlalchemy import CheckConstraint, Column, ForeignKey, Index
 from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, String
 

@@ -9,7 +9,7 @@ from app.admin.views import admin_views
 from app.api.runtime import router as runtime_router
 from app.api.v1.router import v1_router
 from app.config import settings
-from app.core.database import check_database, close_database, init_engine, engine
+from app.core.database import check_database, close_database, init_engine
 from app.core.errors import register_error_handlers
 from app.core.logger import logger, setup_logging
 from app.core.middlewares import LoggingMiddleware

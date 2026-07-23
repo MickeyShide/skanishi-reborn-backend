@@ -15,8 +15,8 @@ router = APIRouter(prefix="/xp", tags=["XP"])
 async def get_xp_history(
     current_user: CurrentUser,
     params: Annotated[XpHistoryQueryParams, Depends()],
-):
+) -> XpHistoryResponse:
     return await FrontendDataBusinessService().get_xp_history(
         current_user=current_user,
-        params=params
+        params=params,
     )

@@ -103,21 +103,15 @@ class EventDispatcher:
         Each worker is independently idempotent — failures are retried
         without affecting the others.
         """
-        try:
-            from app.workers.game_tasks import (
-                process_achievement_check,
-                process_collection_progress,
-                process_quest_progress,
-            )
+        from app.workers.game_tasks import (
+            process_achievement_check,
+            process_collection_progress,
+            process_quest_progress,
+        )
 
-            process_quest_progress.delay(payload)
-            process_achievement_check.delay(payload)
-            process_collection_progress.delay(payload)
-        except ImportError:
-            # Tasks not yet implemented — log and continue.
-            logger.debug(
-                "Side-effect tasks not available yet; skipping quest/achievement/collection checks."
-            )
+        process_quest_progress.delay(payload)
+        process_achievement_check.delay(payload)
+        process_collection_progress.delay(payload)
 
 
 event_dispatcher = EventDispatcher()

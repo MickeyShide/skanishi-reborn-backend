@@ -118,6 +118,25 @@ class XpEventService(BaseService):
             occurred_at=occurred_at,
         )
 
+    async def create_event(
+        self,
+        *,
+        user_id: int,
+        source: str,
+        tag: str,
+        xp: int,
+        color: UIColorToken,
+        occurred_at: datetime,
+    ) -> XpEvent:
+        return await self.xp_event_repository.create(
+            user_id=user_id,
+            source=source,
+            tag=tag,
+            xp=xp,
+            color=color,
+            occurred_at=occurred_at,
+        )
+
     @staticmethod
     def build_scan_source(scan_id: str) -> str:
         return f"scan:{scan_id}"
